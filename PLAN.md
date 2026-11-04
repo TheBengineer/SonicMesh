@@ -57,12 +57,20 @@ picture lives at the gateway.
 
 ## 3. System design
 
-**Node types.**
-- *Detector node (~$40–60):* ESP32-S3 (N16R8, 8 MB PSRAM), 1 I²S MEMS mic, SX1262 LoRa,
-  GNSS with PPS, solar + 18650. It reports detections, level and harmonic frequencies.
-- *Array node (~$70–95):* the same, with 4 mics (5–15 cm aperture) for bearings. Placed every
-  2nd–3rd position, or at every position on critical segments.
-- Both scan for Remote ID (BLE / Wi-Fi) for free.
+**Node types.** Sizing and power figures are in
+[doc 04](docs/research/04-hardware-boundaries.md).
+- *Detector node (~$20–35, ~2 mA):* nRF52840 or nRF54L15 + SX1262 (dev board: RAK4631), with
+  1 PDM mic (e.g. T5838).
+  - No GNSS: position is surveyed at install, and time sync comes from gateway LoRa beacons.
+  - Scans BLE for Remote ID.
+  - Runs for months on one 18650, or indefinitely on a 0.15–0.5 W panel.
+- *Array node (~$65–90, ~45–63 mA):* ESP32-S3 N16R8 + 4 PDM/TDM mics + SX1262 + GNSS with PPS.
+  - Aperture: 10–15 cm for FPV-class drones; 30–50 cm helps low-frequency drones.
+  - Power: 2.5–3.5 W panel and 2× 18650.
+  - Placement: every 2nd–3rd position, or every position on critical segments.
+- *Reference node (optional, ~$100–140):* ESP32-P4 + ESP32-C6 with 8 mics, for research and
+  labelled data.
+- **Mics:** avoid the ICS-43434, which is Last Time Buy. Plan around PDM or TDM mic families.
 
 **Perimeter geometry.**
 - **Spacing ≈ 1.5 × reliable detection radius.** If the 150–300 m estimate holds, that's
@@ -167,7 +175,8 @@ Repo, research docs 01–03, simulation experiments, and real drone recordings (
 - [ ] Phase 1: build `sim/acoustics` out of the experiment code, and collect negative background recordings.
 - [ ] Phase 1: a detector baseline with an adaptive harmonic band, scored for detection and false alarms on real audio.
 - [ ] Order a bench kit:
-  - 2× ESP32-S3 N16R8
-  - 8× ICS-43434 mics
+  - 2× RAK4631 + 2× PDM mic breakouts (detector node)
+  - 2× ESP32-S3 N16R8 + 8× PDM/TDM mics (array node)
   - 1× LilyGO T-Beam Supreme
   - 1× Raspberry Pi Zero 2 W + GNSS module, for synced field recording
+  - 1× power profiler (e.g. Nordic PPK2)
