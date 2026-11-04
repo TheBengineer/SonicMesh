@@ -90,6 +90,9 @@ AudioWorklet (listen)  LoRa channel + TDMA   ◀──   LoRa out, clock,
                        ranging, energy             accelerometer
 ```
 
+**Acoustic engine language.** The engine models the world, not node firmware, so it is TypeScript in
+the sim worker with allocation-free typed-array loops. It moves to WASM only if profiling says so.
+
 **Static site.** Vite + TypeScript, with no backend, so it runs from a file server or any static
 host.
 - Threads talk through `SharedArrayBuffer` ring buffers. That requires cross-origin isolation

@@ -1,0 +1,37 @@
+{
+  "format": "sonicmesh-scenario",
+  "version": 1,
+  "name": "Golden: FPV crossing past 3 mics at 20 m/s",
+  "seed": 7,
+  "terrain": {
+    "size_m": [2000, 1000],
+    "amplitude_m": 0,
+    "wavelength_m": 900,
+    "road_y_m": 80
+  },
+  "gateway": { "x": 0, "y": -250 },
+  "nodes": [
+    { "id": 1, "kind": "detector", "x": -100, "y": 0 },
+    { "id": 2, "kind": "detector", "x": 0, "y": 0 },
+    { "id": 3, "kind": "detector", "x": 100, "y": 0 }
+  ],
+  "drones": [
+    {
+      "id": 1,
+      "class": "fpv",
+      "path": {
+        "kind": "crossing",
+        "from": { "x": -300, "y": 40 },
+        "to": { "x": 300, "y": 40 },
+        "speed_mps": 20,
+        "altitude_m": 30
+      }
+    }
+  ],
+  "acoustics": {
+    "self_noise": false,
+    "ambient_db_spl": null,
+    "wobble": false,
+    "broadband": false
+  }
+}

@@ -20,9 +20,10 @@ export function renderAbout(dialog: HTMLDialogElement): void {
     </p>
     <p>
       This demo simulates the whole perimeter in the browser: terrain, trees, a drone you can fly, nodes you
-      can place, and the gateway. The skeleton (milestone M0) covers the world, flight, editing, record and
-      replay, and the provenance ledger. The acoustics and node code arrive in later milestones. Until then
-      each component is tagged in the badges and in the "What's real?" page.
+      can place, and the gateway. Milestone M0 covers the world, flight, editing, record and replay, and the
+      provenance ledger. Milestone M1 adds the acoustic engine: every mic hears the drone through a modelled
+      path, and you can see its waterfall and listen to it. The node and gateway code arrive in later milestones.
+      Each component is tagged in the badges and in the "What's real?" page.
     </p>
     <div class="links">
       <a href="${REPO}" target="_blank" rel="noopener">Repository on GitHub</a>

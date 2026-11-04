@@ -6,9 +6,9 @@ components:
     name: Terrain
     tag: STUB
     milestone: M0
-    summary: "Procedural heightmap from the scenario seed, about 5 km by 2 km. Visual only in M0."
+    summary: "Procedural heightmap from the scenario seed, about 5 km by 2 km. Shapes the sound paths (terrain-blocking) but is drawn only as a visual."
     evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/docs/web-demo-plan.md"
-    upgrade: "STUB to MODELLED in M1: Maekawa barrier attenuation for paths blocked by terrain."
+    upgrade: "Terrain blocking is MODELLED (see terrain-blocking). The heightmap itself stays STUB until surveyed."
     bias: "No ground wave and no refraction once acoustics arrive."
 
   - id: road
@@ -91,10 +91,82 @@ components:
     name: Drone sound, interactive
     tag: MODELLED
     milestone: M1
-    summary: "Synthetic quadrotor: four rotors, harmonics and blade-modulated broadband noise, with rotor speed following the flight."
+    summary: "Synthetic quadrotor: four rotors, 10 harmonics and blade-modulated broadband noise, ported from tdoa_feasibility.py. Rotor speed follows thrust, sqrt(g + a_z), plus wobble."
     evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/sim/experiments/tdoa_feasibility.py"
     upgrade: "Timing statistics already fitted to REAL recordings. Add a direct comparison against them."
-    bias: "Not a recording. It cannot respond to the stick beyond small changes."
+    bias: "Not a recording. Fixed harmonic phases and rotor offsets. Wobble is a one-pole approximation of the filter in the feasibility study. Golden tests cover the tonal part only."
+
+  - id: air-absorption
+    name: Air absorption
+    tag: MODELLED
+    milestone: M1
+    summary: "ISO 9613-1 table at about 20 C and 70 % RH, as a 32-tap minimum-phase FIR per path, updated each block from the path length. Matches the table within 1 dB from 100 Hz to 4 kHz at 1 km."
+    evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/sim/experiments/tdoa_feasibility.py"
+    upgrade: "MODELLED to REAL: measure attenuation at the site's humidity and temperature, and check the table above 4 kHz."
+    bias: "Table is linear between points. Humidity and temperature are fixed. Above 4 kHz the FIR is less exact."
+
+  - id: drone-rotors
+    name: Rotor speeds and emitted spectrum
+    tag: MODELLED
+    milestone: M1
+    summary: "Each rotor's blade-pass frequency at the source over time, from thrust and wobble, and the emitted spectrum at 1 m. Shown in the drone inspector."
+    evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/sim/experiments/tdoa_feasibility.py"
+    upgrade: "MODELLED to REAL: compare with rotor tachometer logs from the drones used in the trials."
+    bias: "Four rotors with fixed offsets. The spectrum is the synthetic source, not a measured one."
+
+  - id: sim-worker
+    name: Sim worker and clock
+    tag: MODELLED
+    milestone: M1
+    summary: "The world and the acoustic engine run in a Web Worker, ticked by a timer on the fixed 10 ms clock. Mic audio goes to the page through SharedArrayBuffer rings, or by postMessage when cross-origin isolation is off. Replay is exact."
+    evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/docs/web-demo-plan.md"
+    upgrade: "Already fixed-step and deterministic. Real-time pacing becomes REAL when it runs on the node's HAL clock."
+    bias: "Browser timers are not MCU timing. A slow machine runs the sim slower than real time, and audio then stays muted."
+
+  - id: waterfall
+    name: Mic waterfall
+    tag: MODELLED
+    milestone: M1
+    summary: "Per-mic scrolling spectrogram: 1024-point Hann FFT, 50 % overlap, 0 to 8 kHz, dB SPL per bin on a 2D canvas. Shows raw spectra only, no detection."
+    evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/docs/web-demo-plan.md"
+    upgrade: "Stays a display. Node detection overlays come with M2."
+    bias: "Levels are the line level of a sine in each bin, so noise bins read differently from tones."
+
+  - id: band-snr
+    name: Band level and SNR
+    tag: MODELLED
+    milestone: M1
+    summary: "Band level from 100 to 4000 Hz per 100 ms, and SNR against the ambient setting of the scenario."
+    evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/docs/web-demo-plan.md"
+    upgrade: "SNR against a measured noise floor once background recordings are loaded."
+    bias: "The reference is the scenario setting, not a measured floor, so SNR is only as good as that setting."
+
+  - id: truth-overlay
+    name: Truth blade-pass lines
+    tag: MODELLED
+    milestone: M1
+    summary: "True received blade-pass harmonics of each rotor at the mic, from the emitted rotor speed and the Doppler delay. Drawn over the waterfall only when truth is on."
+    evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/sim/golden/render.py"
+    upgrade: "Stays truth. It is the reference that M2 detection is scored against."
+    bias: "Uses the same model as the audio, so it cannot show model errors. It is not a measurement."
+
+  - id: listen-playback
+    name: Listen mode
+    tag: MODELLED
+    milestone: M1
+    summary: "Plays one sim mic in real time through an AudioWorklet, upsampled from 16 kHz to the device rate, with gain. Muted unless the sim runs at 1x."
+    evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/docs/web-demo-plan.md"
+    upgrade: "Playback of a real mic recording, once field logs replace simulated nodes."
+    bias: "Upsampling is a 4-point interpolator, so some image noise above 8 kHz is not removed. Latency is about 0.2 s."
+
+  - id: source-level
+    name: Drone source level and blade-pass frequency
+    tag: ASSUMED
+    milestone: M1
+    summary: "Per class: blade-pass frequency (FPV 600 Hz, Mini 250 Hz, Matrice-class 100 Hz), wobble (2 %, 1.5 %, 0.6 %) and level at 1 m (85, 80, 80 dB SPL)."
+    evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/docs/research/03-real-hover-audio.md"
+    upgrade: "ASSUMED to REAL: measure the level at 1 m and the BPF of the drones used in the trials."
+    bias: "Level and BPF are typical values. The level is the harmonic RMS at 1 m, not a measured spectrum."
 
   - id: drone-sound-replay
     name: Drone sound, replay
@@ -109,10 +181,28 @@ components:
     name: Sound propagation
     tag: MODELLED
     milestone: M1
-    summary: "Time-varying delay per path, so Doppler appears on its own. 1/r spreading, ground reflection by image source and air absorption."
+    summary: "Retarded delay per path, solved at each 10 ms block end and interpolated per sample, so Doppler appears on its own. 1/r spreading, ground reflection by image source (gain 0.7) and air absorption (see air-absorption)."
     evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/sim/experiments/tdoa_feasibility.py"
     upgrade: "MODELLED to REAL: compare with field recordings at known distances."
-    bias: "Absorption is approximated, not the exact ISO 9613-1 curve."
+    bias: "Delay is linear between block ends, which is exact to well under a microsecond for these speeds. The image source is mirrored in the mic's ground plane."
+
+  - id: terrain-blocking
+    name: Terrain blocking
+    tag: MODELLED
+    milestone: M1
+    summary: "Paths that pass below a ridge get a Maekawa barrier loss from the path difference over the highest ground point."
+    evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/docs/web-demo-plan.md"
+    upgrade: "MODELLED to REAL: compare with measured loss behind a bank or ridge."
+    bias: "No ground wave, no refraction. The image path is not checked for blocking."
+
+  - id: ambient-noise
+    name: Ambient noise per mic
+    tag: MODELLED
+    milestone: M1
+    summary: "Pink noise from 100 Hz to 4 kHz at a set dB SPL, independent per mic. Level is a scenario setting, 40 dB SPL by default."
+    evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/docs/web-demo-plan.md"
+    upgrade: "Replace with real background recordings (REAL) when the file picker lands."
+    bias: "Diffuse and stationary. It has no wind, traffic or weather."
 
   - id: wind
     name: Wind noise
@@ -145,9 +235,10 @@ components:
     name: Microphone model
     tag: MODELLED
     milestone: M1
-    summary: "Planned: self-noise near 29 dB SPL, frequency response, PDM to PCM conversion and clipping."
+    summary: "Flat self-noise at 29 dB SPL as Gaussian noise. No frequency response, PDM to PCM conversion or clipping yet."
     evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/docs/research/04-hardware-boundaries.md"
     upgrade: "MODELLED to REAL: measure the mics used in the nodes."
+    bias: "Self-noise is white. A real MEMS mic is not flat."
 
   - id: lora-airtime
     name: LoRa airtime and TDMA

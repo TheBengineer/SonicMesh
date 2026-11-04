@@ -359,6 +359,55 @@ h3 {
   text-align: left;
 }
 
+.plot {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin: 6px 0;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #0b1016;
+}
+
+.plot.wf {
+  height: 260px;
+}
+
+.scale {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.scale .ramp {
+  flex: 1;
+  height: 8px;
+  border-radius: 4px;
+  background: linear-gradient(
+    90deg,
+    rgb(8, 10, 24),
+    rgb(60, 20, 120) 35%,
+    rgb(200, 60, 70) 60%,
+    rgb(250, 170, 50) 80%,
+    rgb(255, 255, 225)
+  );
+}
+
+.gain {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0;
+  color: var(--muted);
+}
+
+.gain input {
+  flex: 1;
+}
+
 .no-webgl {
   position: absolute;
   inset: 0;

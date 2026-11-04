@@ -26,6 +26,16 @@ export interface DroneSpec {
   path: PathSpec;
 }
 
+// Switches for the random and terrain-dependent parts of the acoustic model.
+export interface AcousticSettings {
+  self_noise: boolean;
+  ambient_db_spl: number | null;
+  wobble: boolean;
+  broadband: boolean;
+}
+
+export const DEFAULT_ACOUSTICS: AcousticSettings = { self_noise: true, ambient_db_spl: 40, wobble: true, broadband: true };
+
 export interface ScenarioFile {
   format: 'sonicmesh-scenario';
   version: 1;
@@ -40,6 +50,7 @@ export interface ScenarioFile {
   gateway: Vec2;
   nodes: NodeSpec[];
   drones: DroneSpec[];
+  acoustics: AcousticSettings;
 }
 
 const NODE_KINDS = ['detector', 'array'] as const;
@@ -75,6 +86,27 @@ function oneOf<T extends string>(o: Obj, key: string, allowed: readonly T[], wha
     fail(`${what}.${key} must be one of ${allowed.join(', ')}`);
   }
   return v as T;
+}
+
+function flag(o: Obj, key: string): boolean {
+  const v = o[key];
+  if (typeof v !== 'boolean') fail(`acoustics.${key} must be true or false`);
+  return v;
+}
+
+function parseAcoustics(v: unknown): AcousticSettings {
+  if (v === undefined) return { ...DEFAULT_ACOUSTICS };
+  const o = asObj(v, 'acoustics');
+  const amb = o.ambient_db_spl;
+  if (amb !== null && (typeof amb !== 'number' || !Number.isFinite(amb) || amb < 0)) {
+    fail('acoustics.ambient_db_spl must be null or a number of at least 0');
+  }
+  return {
+    self_noise: flag(o, 'self_noise'),
+    ambient_db_spl: amb as number | null,
+    wobble: flag(o, 'wobble'),
+    broadband: flag(o, 'broadband'),
+  };
 }
 
 function vec(v: unknown, what: string): Vec2 {
@@ -168,5 +200,6 @@ export function parseScenario(data: unknown): ScenarioFile {
     gateway: vec(o.gateway, 'gateway'),
     nodes,
     drones,
+    acoustics: parseAcoustics(o.acoustics),
   };
 }

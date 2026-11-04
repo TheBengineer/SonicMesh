@@ -1,6 +1,18 @@
 import { SPEEDS } from '../sim/clock';
-import type { Runner } from '../sim/runner';
 import { need } from './dom';
+
+// What the timeline shows, taken from the latest frame.
+export interface TimelineInfo {
+  simTimeS: number;
+  tick: number;
+  seed: number;
+  playing: boolean;
+  speed: number;
+  truth: boolean;
+  pending: number;
+  logLength: number;
+  msPerTick: number;
+}
 
 export interface TimelineHandlers {
   togglePlay(): void;
@@ -72,20 +84,18 @@ export class Timeline {
     });
   }
 
-  update(runner: Runner, message = ''): void {
-    const s = runner.world.state;
-    const playing = runner.clock.playing;
-    const label = playing ? '❚❚ Pause' : '▶ Play';
+  update(info: TimelineInfo, message = ''): void {
+    const label = info.playing ? '❚❚ Pause' : '▶ Play';
     if (this.play.textContent !== label) this.play.textContent = label;
-    if (this.speed.value !== String(runner.clock.speed)) this.speed.value = String(runner.clock.speed);
-    this.truth.setAttribute('aria-pressed', String(s.truth));
-    const readout = `t = ${runner.simTimeS.toFixed(2)} s · tick ${s.tick} · seed ${runner.world.terrain.seed}`;
+    if (this.speed.value !== String(info.speed)) this.speed.value = String(info.speed);
+    this.truth.setAttribute('aria-pressed', String(info.truth));
+    const readout = `t = ${info.simTimeS.toFixed(2)} s · tick ${info.tick} · seed ${info.seed} · engine ${info.msPerTick.toFixed(2)} ms/tick`;
     if (this.readout.textContent !== readout) this.readout.textContent = readout;
 
-    const replaying = runner.pending > 0;
+    const replaying = info.pending > 0;
     const text = replaying
-      ? `Replaying: ${runner.pending} logged inputs still to come`
-      : `Recording: ${runner.log.length} inputs logged this run`;
+      ? `Replaying: ${info.pending} logged inputs still to come`
+      : `Recording: ${info.logLength} inputs logged this run`;
     const full = message ? `${text} · ${message}` : text;
     if (this.status.textContent !== full) this.status.textContent = full;
     this.status.classList.toggle('replay', replaying);

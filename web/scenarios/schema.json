@@ -34,6 +34,18 @@
     "drones": {
       "type": "array",
       "items": { "$ref": "#/definitions/drone" }
+    },
+    "acoustics": {
+      "description": "Switches for the random and terrain-dependent acoustic model. Omitted means all on, with 40 dB SPL ambient.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["self_noise", "ambient_db_spl", "wobble", "broadband"],
+      "properties": {
+        "self_noise": { "type": "boolean" },
+        "ambient_db_spl": { "type": ["number", "null"], "minimum": 0 },
+        "wobble": { "type": "boolean" },
+        "broadband": { "type": "boolean" }
+      }
     }
   },
   "definitions": {

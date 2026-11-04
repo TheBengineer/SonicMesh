@@ -8,6 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "test": "vitest run",
+    "bench": "BENCH=1 vitest run tests/engine.perf.test.ts --silent=false",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

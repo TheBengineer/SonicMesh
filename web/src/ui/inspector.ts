@@ -1,7 +1,8 @@
+import { CLASS_ACOUSTICS } from '../acoustics/model';
 import { COMPONENT } from '../provenance/components';
 import type { Ledger } from '../provenance/ledger';
 import type { Selection } from '../selection';
-import type { PathSpec } from '../sim/scenario';
+import type { NodeSpec, PathSpec } from '../sim/scenario';
 import { DRONE_CLASSES, type DroneState, type World } from '../sim/world';
 import { badgeHtml, esc, fmt } from './dom';
 
@@ -13,20 +14,30 @@ export interface Panel {
   live: Record<string, string>;
 }
 
+export type InspectTab = 'details' | 'waterfall';
+
+// Node waterfall state, owned by the app. The panel only shows it.
+export interface InspectView {
+  tab: InspectTab;
+  mic: string | null;
+  listening: string | null;
+  gain: number;
+  overlay: boolean;
+  truth: boolean;
+  ambientLabel: string;
+  listenNote: string;
+}
+
 export interface InspectContext {
   world: World;
   selection: Selection;
   ledger: Ledger;
+  view: InspectView;
 }
 
 export type ActionData = Record<string, string | undefined>;
 
-interface Tab {
-  id: string;
-  label: string;
-  applies(selection: Selection): boolean;
-  build(ctx: InspectContext): Panel;
-}
+const TAB_LABEL: Record<InspectTab, string> = { details: 'Details', waterfall: 'Waterfall' };
 
 function live(name: string): string {
   return `<span data-live="${name}"></span>`;
@@ -53,6 +64,12 @@ function pathLabel(path: PathSpec): string {
   }
 }
 
+// Mic keys of a node, as the engine names them: node id and mic index.
+export function micKeysOf(n: NodeSpec): string[] {
+  const count = n.kind === 'array' ? 4 : 1;
+  return Array.from({ length: count }, (_, j) => `${n.id}.${j}`);
+}
+
 function droneTab(ctx: InspectContext, d: DroneState): Panel {
   const { world, ledger } = ctx;
   const tag = (id: string): string => badgeHtml(ledger.byId.get(id));
@@ -66,11 +83,12 @@ function droneTab(ctx: InspectContext, d: DroneState): Panel {
     `<button data-action="drone-path" data-id="${d.id}" data-value="${kind}" aria-pressed="${d.path.kind === kind}">${label}</button>`;
   const alt = d.alt;
   const agl = alt - world.terrain.height(d.x, d.y);
+  const bpf = CLASS_ACOUSTICS[d.class].bpf_hz;
   return {
     key: `drone|${d.id}|${d.class}|${d.flight}|${d.path.kind}`,
     html: `
       <h2>Drone ${d.id}</h2>
-      <div class="badges">${tag(COMPONENT.droneDynamics)}${tag(COMPONENT.droneClasses)}${scripted ? tag(COMPONENT.dronePaths) : ''}</div>
+      <div class="badges">${tag(COMPONENT.droneDynamics)}${tag(COMPONENT.droneClasses)}${scripted ? tag(COMPONENT.dronePaths) : ''}${tag(COMPONENT.droneRotors)}</div>
       ${rows([
         ['Class', `<select data-action="drone-class" data-id="${d.id}" aria-label="Drone class">${classOptions}</select>`],
         ['Path', esc(pathLabel(d.path))],
@@ -95,6 +113,12 @@ function droneTab(ctx: InspectContext, d: DroneState): Panel {
         ${pathButton('terrain_follow', 'Terrain-follow')}
       </div>
       <p class="note">Drawn at an exaggerated size so it is visible at map scale.</p>
+      <h3>Rotor speeds</h3>
+      <canvas class="plot" data-plot="rotors" width="300" height="150" aria-label="Rotor blade-pass frequencies over the last 5 s"></canvas>
+      <p class="note">Emitted blade-pass frequency of each rotor over the last 5 s, from thrust and wobble. Hover gives ${bpf} Hz for this class (ASSUMED).</p>
+      <h3>Emitted spectrum</h3>
+      <canvas class="plot" data-plot="spectrum" width="300" height="150" aria-label="Emitted spectrum at 1 m"></canvas>
+      <p class="note">The synthetic source at 1 m, dB SPL per bin, 0 to 4 kHz.</p>
       <div class="actions"><button data-action="drone-remove" data-id="${d.id}">Remove drone</button></div>
     `,
     live: {
@@ -106,17 +130,15 @@ function droneTab(ctx: InspectContext, d: DroneState): Panel {
   };
 }
 
-function nodeTab(ctx: InspectContext, id: number): Panel | null {
+function detailsNode(ctx: InspectContext, n: NodeSpec): Panel {
   const { world, ledger } = ctx;
-  const n = world.state.nodes.find((o) => o.id === id);
-  if (!n) return null;
   const isArray = n.kind === 'array';
   const other = isArray ? 'detector' : 'array';
   return {
     key: `node|${n.id}|${n.kind}`,
     html: `
       <h2>Node ${n.id}</h2>
-      <div class="badges">${badgeHtml(ledger.byId.get(isArray ? COMPONENT.nodeArray : COMPONENT.nodeDetector))}</div>
+      <div class="badges">${badgeHtml(ledger.byId.get(isArray ? COMPONENT.nodeArray : COMPONENT.nodeDetector))}${badgeHtml(ledger.byId.get(COMPONENT.mic))}</div>
       ${rows([
         ['Type', isArray ? 'Array, 4 mics' : 'Detector, 1 mic'],
         ['True position', live('n-pos')],
@@ -126,12 +148,50 @@ function nodeTab(ctx: InspectContext, id: number): Panel | null {
         <button data-action="node-kind" data-id="${n.id}" data-value="${other}">Make ${other}</button>
         <button data-action="node-remove" data-id="${n.id}">Remove node</button>
       </div>
-      <p class="note">A marker in M0. Detection, bearings and messages arrive with the node core in M2.</p>
+      <p class="note">Open the Waterfall tab for the mic audio, band level and listen mode. Detection, bearings and messages arrive with the node core in M2.</p>
     `,
     live: {
       'n-pos': `${fmt(n.x)}, ${fmt(n.y)} m`,
       'n-ground': `${fmt(world.terrain.height(n.x, n.y))} m`,
     },
+  };
+}
+
+function waterfallNode(ctx: InspectContext, n: NodeSpec): Panel {
+  const { ledger, view } = ctx;
+  const isArray = n.kind === 'array';
+  const mics = micKeysOf(n);
+  const mic = view.mic && mics.includes(view.mic) ? view.mic : mics[0];
+  const listening = view.listening === mic;
+  const options = mics
+    .map((k, j) => `<option value="${k}"${k === mic ? ' selected' : ''}>Mic ${j + 1} (${k})</option>`)
+    .join('');
+  const truthOn = view.truth;
+  const overlayOn = truthOn && view.overlay;
+  return {
+    key: `waterfall|${n.id}|${n.kind}|${mic}|${listening}|${overlayOn}|${truthOn}|${view.ambientLabel}`,
+    html: `
+      <h2>Node ${n.id}, waterfall</h2>
+      <div class="badges">${badgeHtml(ledger.byId.get(isArray ? COMPONENT.nodeArray : COMPONENT.nodeDetector))}${badgeHtml(ledger.byId.get(COMPONENT.waterfall))}</div>
+      <div class="actions"><select data-action="mic-select" data-id="${n.id}" aria-label="Mic">${options}</select></div>
+      <canvas class="plot wf" data-plot="waterfall" width="300" height="512" aria-label="Mic spectrogram, 0 to 8 kHz"></canvas>
+      <div class="scale"><span>10 dB</span><span class="ramp"></span><span>90 dB</span></div>
+      <p class="note">dB SPL per bin, as the line level of a sine in that bin. 1024-point Hann FFT, 50 % overlap, 0 to 8 kHz, newest on the right.</p>
+      <div class="actions"><button data-action="overlay" data-id="${n.id}" aria-pressed="${overlayOn}"${truthOn ? '' : ' disabled'}>Truth: blade-pass harmonics</button></div>
+      <p class="note">${
+        truthOn
+          ? 'White dots: the true blade-pass harmonics of each rotor at this mic, from the emitted rotor speed and the Doppler delay.'
+          : 'Turn truth on (T) to show the true blade-pass harmonics.'
+      }</p>
+      <h3>Band level and SNR</h3>
+      <canvas class="plot" data-plot="level" width="300" height="150" aria-label="Band level and SNR over time"></canvas>
+      <p class="note">Band 100 to 4000 Hz per 100 ms. SNR is that band minus the ambient setting (${esc(view.ambientLabel)}), so with no drone it sits near 0 dB.</p>
+      <h3>Listen</h3>
+      <div class="actions"><button data-action="listen" data-value="${mic}" aria-pressed="${listening}">${listening ? 'Stop listening' : 'Listen to this mic'}</button></div>
+      <label class="gain">Gain <input type="range" min="0" max="2" step="0.05" value="${view.gain}" data-action="listen-gain" aria-label="Listen gain"></label>
+      <p class="note">${live('listen-note')}</p>
+    `,
+    live: { 'listen-note': view.listenNote },
   };
 }
 
@@ -184,7 +244,7 @@ function sceneTab(ctx: InspectContext): Panel {
         ['Terrain', `${t.size[0] / 1000} x ${t.size[1] / 1000} km`],
         ['Nodes', `${s.nodes.length}`],
         ['Drones', `${s.drones.length}`],
-        ['Truth overlay', s.truth ? 'on (no effect yet)' : 'off (no effect yet)'],
+        ['Truth overlay', s.truth ? 'on' : 'off'],
         ['Sim time', live('s-time')],
       ])}
       <p class="note">Click a node, drone, the gateway or the radar to inspect it. Drag nodes and the gateway on the ground. Click the ground to add when a + button is active.</p>
@@ -193,27 +253,20 @@ function sceneTab(ctx: InspectContext): Panel {
   };
 }
 
-const TABS: Tab[] = [
-  {
-    id: 'details',
-    label: 'Details',
-    applies: () => true,
-    build(ctx) {
-      const sel = ctx.selection;
-      if (sel?.kind === 'node') {
-        const p = nodeTab(ctx, sel.id);
-        if (p) return p;
-      }
-      if (sel?.kind === 'drone') {
-        const d = ctx.world.state.drones.find((o) => o.id === sel.id);
-        if (d) return droneTab(ctx, d);
-      }
-      if (sel?.kind === 'gateway') return gatewayTab(ctx);
-      if (sel?.kind === 'radar') return radarTab(ctx);
-      return sceneTab(ctx);
-    },
-  },
-];
+function detailsPanel(ctx: InspectContext): Panel {
+  const sel = ctx.selection;
+  if (sel?.kind === 'node') {
+    const n = ctx.world.state.nodes.find((o) => o.id === sel.id);
+    if (n) return detailsNode(ctx, n);
+  }
+  if (sel?.kind === 'drone') {
+    const d = ctx.world.state.drones.find((o) => o.id === sel.id);
+    if (d) return droneTab(ctx, d);
+  }
+  if (sel?.kind === 'gateway') return gatewayTab(ctx);
+  if (sel?.kind === 'radar') return radarTab(ctx);
+  return sceneTab(ctx);
+}
 
 function selectionId(s: Selection): number | undefined {
   return s && 'id' in s ? s.id : undefined;
@@ -244,18 +297,26 @@ function objectList(ctx: InspectContext): Panel {
 }
 
 export function buildPanel(ctx: InspectContext): Panel {
-  const tab = TABS.find((t) => t.applies(ctx.selection)) ?? TABS[0];
-  const panel = tab.build(ctx);
+  const sel = ctx.selection;
+  const tabs: InspectTab[] = sel?.kind === 'node' ? ['details', 'waterfall'] : ['details'];
+  const tab: InspectTab = tabs.includes(ctx.view.tab) ? ctx.view.tab : 'details';
+  let main: Panel | null = null;
+  if (tab === 'waterfall' && sel?.kind === 'node') {
+    const n = ctx.world.state.nodes.find((o) => o.id === sel.id);
+    if (n) main = waterfallNode(ctx, n);
+  }
+  const body = main ?? detailsPanel(ctx);
   const list = objectList(ctx);
-  const key = `${list.key}|${panel.key}`;
-  if (TABS.length < 2) return { ...panel, key, html: list.html + panel.html };
-  const bar = TABS.map(
-    (t) => `<button data-action="inspector-tab" data-value="${t.id}" aria-selected="${t.id === tab.id}">${esc(t.label)}</button>`,
-  ).join('');
+  const bar =
+    tabs.length < 2
+      ? ''
+      : `<div class="inspector-tabs">${tabs
+          .map((t) => `<button data-action="inspector-tab" data-value="${t}" aria-selected="${t === tab}">${TAB_LABEL[t]}</button>`)
+          .join('')}</div>`;
   return {
-    ...panel,
-    key: `${tab.id}|${key}`,
-    html: `<div class="inspector-tabs">${bar}</div>${list.html}${panel.html}`,
+    key: `${tab}|${list.key}|${body.key}`,
+    html: bar + list.html + body.html,
+    live: body.live,
   };
 }
 
@@ -273,6 +334,10 @@ export class Inspector {
     root.addEventListener('change', (e) => {
       const el = e.target as HTMLSelectElement;
       if (el.tagName === 'SELECT' && el.dataset.action) onAction(el.dataset.action, { ...el.dataset, value: el.value });
+    });
+    root.addEventListener('input', (e) => {
+      const el = e.target as HTMLInputElement;
+      if (el.type === 'range' && el.dataset.action) onAction(el.dataset.action, { ...el.dataset, value: el.value });
     });
   }
 
