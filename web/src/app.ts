@@ -176,7 +176,7 @@ export function startApp(root: HTMLElement): void {
   const host = new SimHost();
   const listener = new Listener(host);
   const view = new WorldView(need<HTMLElement>(root, '#scene'));
-  const legendEl = need<HTMLElement>(root, '#legend');
+  const legendEl = need<HTMLElement>(root, '#legend-rows');
   const inspectorEl = need<HTMLElement>(root, '#inspector');
   const aboutDialog = need<HTMLDialogElement>(document, '#about-dialog');
   const ledgerDialog = need<HTMLDialogElement>(document, '#ledger-dialog');

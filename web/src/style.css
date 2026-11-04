@@ -91,9 +91,17 @@ body {
   left: 10px;
   bottom: 10px;
   padding: 8px 10px;
+}
+
+#legend summary {
+  cursor: pointer;
+}
+
+#legend-rows {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  margin-top: 8px;
   /* the ledger keeps growing; keep the map visible */
   max-height: 32vh;
   overflow-y: auto;
