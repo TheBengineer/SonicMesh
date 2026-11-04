@@ -9,7 +9,7 @@ import type { Selection } from './selection';
 import { WorldView, type Hit, type Target, type ViewMode } from './scene/worldView';
 import { drawTraces, type Trace } from './ui/charts';
 import { badgeHtml, download, esc, need, readJson } from './ui/dom';
-import { Inspector, buildPanel, micKeysOf, type ActionData, type InspectTab, type InspectView } from './ui/inspector';
+import { Inspector, buildPanel, micKeysOf, type ActionData, type InspectTab, type InspectView, type MessageFilter } from './ui/inspector';
 import { renderAbout, renderLedger } from './ui/overlays';
 import { Timeline, type TimelineInfo } from './ui/timeline';
 import { parseInputLog, type LogEntry } from './sim/inputs';
@@ -53,6 +53,14 @@ function presentIds(world: World, scn: ScenarioFile): Set<string> {
     ids.add(COMPONENT.waterfall);
     ids.add(COMPONENT.listen);
     ids.add(COMPONENT.bandSnr);
+    ids.add(COMPONENT.loraCodec);
+    ids.add(COMPONENT.loraAirtime);
+    ids.add(COMPONENT.loraPathLoss);
+    ids.add(COMPONENT.loraMac);
+    ids.add(COMPONENT.loraNodeStub);
+    ids.add(COMPONENT.ranging);
+    ids.add(COMPONENT.healthReport);
+    ids.add(COMPONENT.energyModel);
   }
   if (scn.acoustics.ambient_db_spl !== null) ids.add(COMPONENT.ambient);
   if (s.drones.length > 0) {
@@ -115,6 +123,7 @@ function blankFrame(scn: ScenarioFile, terrain: Terrain): Frame {
     logLength: 0,
     msPerTick: 0,
     state: createWorld(scn, terrain).state,
+    lora: null,
     rotors: null,
     spectrum: null,
     truth: null,
@@ -129,7 +138,7 @@ function noiseFloor(scn: ScenarioFile): { db: number | null; label: string } {
   return { db: null, label: 'no ambient or self-noise' };
 }
 
-function timelineInfo(f: Frame, seed: number): TimelineInfo {
+function timelineInfo(f: Frame, seed: number, selectedPacket: number | null): TimelineInfo {
   return {
     simTimeS: f.simTimeS,
     tick: f.tick,
@@ -140,6 +149,8 @@ function timelineInfo(f: Frame, seed: number): TimelineInfo {
     pending: f.pending,
     logLength: f.logLength,
     msPerTick: f.msPerTick,
+    lora: f.lora,
+    selectedPacket,
   };
 }
 
@@ -188,8 +199,9 @@ export function startApp(root: HTMLElement): void {
   let lastLegend = '';
   let lastInspect = '';
   const keysDown = new Set<string>();
-  // Node waterfall state.
+  // Node tabs and filters.
   let nodeTab: InspectTab = 'details';
+  let msgFilter: MessageFilter = 'all';
   let micPick: string | null = null;
   let overlay = false;
   let listenKey: string | null = null;
@@ -309,6 +321,7 @@ export function startApp(root: HTMLElement): void {
       truth: frameNow().state.truth,
       ambientLabel: noiseFloor(scenario).label,
       listenNote: listenNote(),
+      msgFilter,
     };
   }
 
@@ -359,7 +372,10 @@ export function startApp(root: HTMLElement): void {
         select(null);
         break;
       case 'inspector-tab':
-        nodeTab = value === 'waterfall' ? 'waterfall' : 'details';
+        if (['details', 'waterfall', 'messages', 'health', 'ranging'].includes(value)) nodeTab = value as InspectTab;
+        break;
+      case 'msg-filter':
+        msgFilter = value === 'sent' || value === 'received' ? value : 'all';
         break;
       case 'mic-select':
         micPick = value;
@@ -423,6 +439,7 @@ export function startApp(root: HTMLElement): void {
         download('sonicmesh-inputs.json', { format: 'sonicmesh-input-log', version: 1, entries: log });
       });
     },
+    selectPacket: (id) => select({ kind: 'packet', id }),
   });
 
   // Scene pointer handling. Clicks select; a press on a node or the gateway drags it on the ground.
@@ -567,7 +584,7 @@ export function startApp(root: HTMLElement): void {
   function refresh(): void {
     const f = frameNow();
     const world = worldNow();
-    inspector.update(buildPanel({ world, selection, ledger, view: inspectView() }));
+    inspector.update(buildPanel({ world, selection, ledger, view: inspectView(), lora: f.lora }));
     const present = presentIds(world, scenario);
     const legend = ledger.entries
       .filter((e) => present.has(e.id))
@@ -577,7 +594,7 @@ export function startApp(root: HTMLElement): void {
       lastLegend = legend;
       legendEl.innerHTML = legend;
     }
-    timeline.update(timelineInfo(f, terrain.seed), message);
+    timeline.update(timelineInfo(f, terrain.seed, selection?.kind === 'packet' ? selection.id : null), message);
     syncInspect();
   }
 
@@ -588,7 +605,7 @@ export function startApp(root: HTMLElement): void {
     last = now;
     pollSticks();
     const f = frameNow();
-    view.sync(worldNow(), f.state, selection);
+    view.sync(worldNow(), f.state, selection, f.lora, f.simTimeS);
     view.render();
     drawPlots(f);
     listener.sync(f);

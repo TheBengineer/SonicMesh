@@ -56,6 +56,7 @@ function advance(batch: Batch): void {
   const t0 = performance.now();
   runner.stepTick();
   engine.tick(runner.world);
+  runner.lora.observeFromEngine(runner.world, engine);
   const dt = performance.now() - t0;
   msAvg = msAvg === 0 ? dt : 0.9 * msAvg + 0.1 * dt;
   syncMics();
@@ -84,6 +85,7 @@ function buildFrame(): Frame | null {
     logLength: runner.log.length,
     msPerTick: msAvg,
     state: s,
+    lora: runner.lora.snapshot(),
     rotors: null,
     spectrum: null,
     truth: null,

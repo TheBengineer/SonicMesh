@@ -1,10 +1,33 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import type { LoraView } from '../lora/types';
 import type { Selection } from '../selection';
 import type { NodeKind } from '../sim/scenario';
 import { placeTrees, type Terrain } from '../sim/terrain';
 import { DRONE_CLASSES, type World, type WorldState } from '../sim/world';
 import type { DroneClass } from '../sim/scenario';
+
+const FATE_COLOR: Record<string, number> = {
+  decoded: 0x3ddc84,
+  collision: 0xffb347,
+  'half-duplex': 0xc86ad6,
+  range: 0xe0605a,
+};
+const FATE_CSS: Record<string, string> = {
+  decoded: '#3ddc84',
+  collision: '#ffb347',
+  'half-duplex': '#c86ad6',
+  range: '#e0605a',
+};
+const PACKET_SECONDS = 1;
+
+function packetColor(fate: string): number {
+  return FATE_COLOR[fate] ?? 0x8a98a8;
+}
+
+function fateCss(fate: string): string {
+  return FATE_CSS[fate] ?? '#8a98a8';
+}
 
 export type ViewMode = 'orbit' | 'follow' | 'top';
 export type Target = { kind: 'node' | 'drone'; id: number } | { kind: 'gateway' } | { kind: 'terrain' };
@@ -232,8 +255,11 @@ export class WorldView {
   private readonly staticGroup = new THREE.Group();
   private readonly nodeGroup = new THREE.Group();
   private readonly droneGroup = new THREE.Group();
+  private readonly packetGroup = new THREE.Group();
   private readonly gateway = buildGateway();
   private readonly radar = buildRadar();
+  private map: HTMLCanvasElement | null = null;
+  private mapCtx: CanvasRenderingContext2D | null = null;
   private readonly ring: THREE.Mesh;
   private readonly nodeMeshes = new Map<number, { kind: NodeKind; obj: THREE.Group }>();
   private readonly droneMeshes = new Map<number, { cls: DroneClass; obj: THREE.Group; tether: THREE.Line }>();
@@ -252,7 +278,7 @@ export class WorldView {
     const sun = new THREE.DirectionalLight(0xffffff, 1.2);
     sun.position.set(-1500, 2500, 1000);
     this.scene.add(new THREE.HemisphereLight(0xffffff, 0x4d6035, 1.8), sun);
-    this.scene.add(this.staticGroup, this.nodeGroup, this.droneGroup, this.gateway, this.radar);
+    this.scene.add(this.staticGroup, this.nodeGroup, this.droneGroup, this.packetGroup, this.gateway, this.radar);
     this.ring = new THREE.Mesh(
       new THREE.RingGeometry(10, 13, 40),
       new THREE.MeshBasicMaterial({ color: 0xffe066, side: THREE.DoubleSide, transparent: true, opacity: 0.9 }),
@@ -263,8 +289,14 @@ export class WorldView {
     if (!renderer || !controls) {
       const note = document.createElement('div');
       note.className = 'no-webgl';
-      note.textContent = '3D view needs WebGL; the simulation, inspector and timeline still work';
-      container.appendChild(note);
+      note.textContent = '3D view needs WebGL; this 2D top-down map shows the same world and packets';
+      this.map = document.createElement('canvas');
+      this.map.className = 'map2d';
+      this.mapCtx = this.map.getContext('2d');
+      container.append(this.map, note);
+      const ro = new ResizeObserver(() => this.resize2d());
+      ro.observe(container);
+      this.resize2d();
       return;
     }
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -328,8 +360,11 @@ export class WorldView {
   }
 
   // Makes three.js objects match world state. Rendering only reads state.
-  sync(world: World, state: WorldState, selection: Selection): void {
-    if (!this.renderer) return;
+  sync(world: World, state: WorldState, selection: Selection, lora: LoraView | null = null, nowS = 0): void {
+    if (!this.renderer) {
+      this.draw2d(world, state, lora, nowS);
+      return;
+    }
     const terrain = world.terrain;
     const seenNodes = new Set<number>();
     for (const n of state.nodes) {
@@ -377,6 +412,7 @@ export class WorldView {
     this.radar.position.copy(this.gateway.position);
 
     this.updateRing(world, state, selection);
+    this.updatePackets(world, state, lora, nowS);
   }
 
   private updateRing(world: World, state: WorldState, selection: Selection): void {
@@ -395,6 +431,136 @@ export class WorldView {
     if (x !== null && y !== null) {
       this.ring.position.copy(toScene(x, y, world.terrain.height(x, y) + 0.5));
     }
+  }
+
+  private packetPos(id: number, state: WorldState, terrain: Terrain): THREE.Vector3 {
+    if (id === 0) return toScene(state.gateway.x, state.gateway.y, terrain.height(state.gateway.x, state.gateway.y) + 8);
+    const n = state.nodes.find((o) => o.id === id);
+    if (!n) return toScene(state.gateway.x, state.gateway.y, terrain.height(state.gateway.x, state.gateway.y) + 8);
+    return toScene(n.x, n.y, terrain.height(n.x, n.y) + 4);
+  }
+
+  private updatePackets(world: World, state: WorldState, lora: LoraView | null, nowS: number): void {
+    disposeGroup(this.packetGroup);
+    this.packetGroup.clear();
+    if (!lora) return;
+    for (const p of lora.packets) {
+      const age = nowS - p.startS;
+      if (age < 0 || age > PACKET_SECONDS) continue;
+      const from = this.packetPos(p.tx, state, world.terrain);
+      const fade = Math.max(0, 1 - age / PACKET_SECONDS);
+      for (const rx of p.rx) {
+        if (rx.id === p.tx) continue;
+        const to = this.packetPos(rx.id, state, world.terrain);
+        const lift = Math.max(20, Math.min(150, from.distanceTo(to) * 0.06));
+        const points: THREE.Vector3[] = [];
+        for (let i = 0; i <= 12; i++) {
+          const t = i / 12;
+          const v = from.clone().lerp(to, t);
+          v.y += Math.sin(Math.PI * t) * lift;
+          points.push(v);
+        }
+        const geo = new THREE.BufferGeometry().setFromPoints(points);
+        const mat = new THREE.LineBasicMaterial({
+          color: packetColor(rx.fate),
+          transparent: true,
+          opacity: 0.15 + 0.8 * fade,
+          depthWrite: false,
+        });
+        this.packetGroup.add(new THREE.Line(geo, mat));
+      }
+    }
+  }
+
+  private resize2d(): void {
+    const canvas = this.map;
+    if (!canvas) return;
+    const w = Math.max(1, this.container.clientWidth);
+    const h = Math.max(1, this.container.clientHeight);
+    const dpr = Math.min(window.devicePixelRatio, 2);
+    canvas.width = Math.round(w * dpr);
+    canvas.height = Math.round(h * dpr);
+    canvas.style.width = `${w}px`;
+    canvas.style.height = `${h}px`;
+    this.mapCtx?.setTransform(dpr, 0, 0, dpr, 0, 0);
+    this.lastMap = { w, h };
+  }
+
+  private lastMap = { w: 1, h: 1 };
+
+  private draw2d(world: World, state: WorldState, lora: LoraView | null, nowS: number): void {
+    const canvas = this.map;
+    const ctx = this.mapCtx;
+    if (!canvas || !ctx) return;
+    const { w, h } = this.lastMap;
+    const terrain = world.terrain;
+    const [sw, sh] = terrain.size;
+    const m = 16;
+    const scale = Math.min((w - 2 * m) / sw, (h - 2 * m) / sh);
+    const sx = (x: number): number => m + (x + sw / 2) * scale;
+    const sy = (y: number): number => m + (sh / 2 - y) * scale;
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = '#16221a';
+    ctx.fillRect(sx(-sw / 2), sy(sh / 2), sw * scale, sh * scale);
+    ctx.strokeStyle = '#3b3f44';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(sx(-sw / 2), sy(terrain.roadY));
+    ctx.lineTo(sx(sw / 2), sy(terrain.roadY));
+    ctx.stroke();
+
+    if (lora) {
+      for (const p of lora.packets) {
+        const age = nowS - p.startS;
+        if (age < 0 || age > PACKET_SECONDS) continue;
+        const tx = p.tx === 0 ? state.gateway : state.nodes.find((n) => n.id === p.tx);
+        if (!tx) continue;
+        ctx.globalAlpha = Math.max(0.1, 1 - age / PACKET_SECONDS);
+        for (const rx of p.rx) {
+          const to = rx.id === 0 ? state.gateway : state.nodes.find((n) => n.id === rx.id);
+          if (!to) continue;
+          ctx.strokeStyle = fateCss(rx.fate);
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(sx(tx.x), sy(tx.y));
+          ctx.lineTo(sx(to.x), sy(to.y));
+          ctx.stroke();
+        }
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    for (const n of state.nodes) {
+      const view = lora?.nodes.find((v) => v.id === n.id);
+      ctx.fillStyle = n.kind === 'array' ? '#ff9f43' : '#4aa3ff';
+      ctx.beginPath();
+      ctx.arc(sx(n.x), sy(n.y), view?.detecting ? 7 : 5, 0, Math.PI * 2);
+      ctx.fill();
+      if (view?.detecting) {
+        ctx.strokeStyle = '#ff4d6d';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(sx(n.x), sy(n.y), 10, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    }
+    ctx.fillStyle = '#3ddc84';
+    ctx.fillRect(sx(state.gateway.x) - 6, sy(state.gateway.y) - 6, 12, 12);
+    for (const d of state.drones) {
+      ctx.fillStyle = '#ff4d6d';
+      ctx.beginPath();
+      ctx.moveTo(sx(d.x), sy(d.y) - 7);
+      ctx.lineTo(sx(d.x) - 5, sy(d.y) + 5);
+      ctx.lineTo(sx(d.x) + 5, sy(d.y) + 5);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.fillStyle = '#dfe6ee';
+    ctx.font = '12px system-ui, sans-serif';
+    const mode = lora ? `LoRa ${lora.mode} mode, superframe ${lora.superframe}` : 'LoRa starting';
+    ctx.fillText(mode, m, h - 10);
+    ctx.fillStyle = '#8a98a8';
+    ctx.fillText('lines: green decoded, amber collision, red range, purple half-duplex', m, h - 26);
   }
 
   // Returns what is under the pointer, or the ground point if nothing else is.

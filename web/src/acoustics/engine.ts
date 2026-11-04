@@ -3,7 +3,7 @@ import { createRng, type Rng } from '../sim/rng';
 import type { DroneClass, ScenarioFile } from '../sim/scenario';
 import type { Terrain } from '../sim/terrain';
 import type { World } from '../sim/world';
-import { gauss, hann, powerSpectrum } from './dsp';
+import { bandLevelDb, gauss, hann, powerSpectrum } from './dsp';
 import { AudioRing, PoseLog, RotorLog, SampleRing, type Vec3 } from './history';
 import { ARRAY_HALF_M, ARRAY_MIC_H_M, BLOCK, DETECTOR_MIC_H_M, FS, GROUND_GAMMA, REF_PA, SELF_NOISE_DB } from './model';
 import { AirFilter, barrierGain, renderPath, solveDelay } from './propagate';
@@ -105,6 +105,28 @@ export class AcousticEngine {
 
   micRing(key: string): AudioRing | undefined {
     return this.mics.get(key)?.ring;
+  }
+
+  // Band level, 100 to 4000 Hz, over the newest 100 ms. Used by the node detection stub.
+  bandLevel(key: string, samples = 1600): number {
+    const ring = this.mic(key).ring;
+    if (ring.written < samples) return -120;
+    const buf = new Float32Array(samples);
+    if (!ring.read(ring.written - samples, buf)) return -120;
+    return bandLevelDb(buf, 100, 4000);
+  }
+
+  // Newest audio for the snippet stub, up to max samples.
+  audioSnippet(key: string, max: number): Float32Array | null {
+    const ring = this.mic(key).ring;
+    const n = Math.min(max, ring.written, ring.capacity);
+    if (n <= 0) return null;
+    const out = new Float32Array(n);
+    return ring.read(ring.written - n, out) ? out : null;
+  }
+
+  ambientDb(): number {
+    return this.scn.acoustics.ambient_db_spl ?? SELF_NOISE_DB;
   }
 
   // Mic output in pressure (Pa), oldest sample first.

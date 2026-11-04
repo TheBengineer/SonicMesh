@@ -4,6 +4,7 @@ import { approach, clamp } from './math';
 import type { DroneClass, DroneSpec, FlightMode, NodeSpec, PathSpec, ScenarioFile, Vec2 } from './scenario';
 import type { Terrain } from './terrain';
 import type { Op } from './inputs';
+import type { LoRaNetwork } from '../lora/mac';
 
 export interface Stick {
   x: number;
@@ -43,6 +44,7 @@ export interface World {
   name: string;
   state: WorldState;
   terrain: Terrain;
+  lora?: LoRaNetwork;
 }
 
 export interface ClassSpec {
@@ -264,5 +266,6 @@ export function applyOp(world: World, op: Op): void {
 }
 
 export function hashWorld(world: World): string {
-  return fnv1a(JSON.stringify(world.state));
+  const lora = world.lora ? world.lora.stateHash() : '';
+  return fnv1a(JSON.stringify(world.state) + '|' + lora);
 }

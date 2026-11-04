@@ -23,6 +23,14 @@ export const COMPONENT = {
   bandSnr: 'band-snr',
   truthOverlay: 'truth-overlay',
   listen: 'listen-playback',
+  loraCodec: 'lora-codec',
+  loraAirtime: 'lora-airtime',
+  loraPathLoss: 'lora-path-loss',
+  loraMac: 'lora-mac',
+  loraNodeStub: 'lora-node-stub',
+  ranging: 'ranging',
+  healthReport: 'health-report',
+  energyModel: 'energy-model',
 } as const;
 
 export const COMPONENT_IDS: string[] = Object.values(COMPONENT);

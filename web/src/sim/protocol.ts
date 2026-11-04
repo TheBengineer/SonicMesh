@@ -1,3 +1,4 @@
+import type { LoraView } from '../lora/types';
 import type { LogEntry, Op } from './inputs';
 import type { ScenarioFile } from './scenario';
 import type { WorldState } from './world';
@@ -51,6 +52,7 @@ export interface Frame {
   logLength: number;
   msPerTick: number;
   state: WorldState;
+  lora: LoraView | null;
   rotors: RotorTrace | null;
   spectrum: SpectrumTrace | null;
   truth: TruthTrace | null;

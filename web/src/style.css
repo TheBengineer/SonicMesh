@@ -30,7 +30,7 @@ body {
 #app {
   display: grid;
   grid-template-columns: 1fr 340px;
-  grid-template-rows: 1fr 118px;
+  grid-template-rows: minmax(0, 1fr) auto;
   height: 100vh;
 }
 
@@ -94,6 +94,9 @@ body {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  /* the ledger keeps growing; keep the map visible */
+  max-height: 32vh;
+  overflow-y: auto;
 }
 
 .legend-row {
@@ -247,6 +250,21 @@ h3 {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+#timeline .lanes {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  cursor: pointer;
+}
+
+#timeline .lane-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 6px;
+  font-size: 12px;
 }
 
 #timeline .readout {

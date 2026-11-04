@@ -1,3 +1,4 @@
+import { LoRaNetwork } from '../lora/mac';
 import { SimClock, TICK_MS } from './clock';
 import type { LogEntry, Op } from './inputs';
 import type { ScenarioFile } from './scenario';
@@ -10,6 +11,7 @@ export class Runner {
   scenario: ScenarioFile;
   world: World;
   log: LogEntry[];
+  lora: LoRaNetwork;
   private terrain: Terrain;
   private cursor = 0;
 
@@ -18,6 +20,14 @@ export class Runner {
     this.log = log.slice();
     this.terrain = new Terrain(scenario.seed, scenario.terrain);
     this.world = createWorld(scenario, this.terrain);
+    this.lora = new LoRaNetwork({
+      seed: scenario.seed,
+      gateway: this.world.state.gateway,
+      nodes: this.world.state.nodes,
+      terrain: this.terrain,
+      ambientDb: scenario.acoustics.ambient_db_spl ?? undefined,
+    });
+    this.world.lora = this.lora;
   }
 
   get tick(): number {
@@ -45,6 +55,8 @@ export class Runner {
   // Back to tick 0, keeping the log so it replays.
   reset(): void {
     this.world = createWorld(this.scenario, this.terrain);
+    this.lora.reset(this.world.state.nodes);
+    this.world.lora = this.lora;
     this.cursor = 0;
   }
 
@@ -63,6 +75,8 @@ export class Runner {
       this.cursor++;
     }
     stepWorld(this.world);
+    this.lora.sync(this.world);
+    this.lora.tick(this.simTimeS);
   }
 
   stepOnce(): void {

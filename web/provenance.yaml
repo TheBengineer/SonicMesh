@@ -240,45 +240,77 @@ components:
     upgrade: "MODELLED to REAL: measure the mics used in the nodes."
     bias: "Self-noise is white. A real MEMS mic is not flat."
 
+  - id: lora-codec
+    name: v0 frame codec
+    tag: MODELLED
+    milestone: M3
+    summary: "Frame encoder and decoder for all eight message types, bit-packed LSB first, little-endian, with a 4-byte AES-CMAC-32 MIC and replay counter. A TypeScript port of the protocol-v0 pack/unpack in sim/protocol/v0.py."
+    evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/docs/protocol-v0.md"
+    upgrade: "Replaced by the C core's encoders (SAME CODE) in M2."
+    bias: "TS port of the spec. Where v0 leaves a variable layout open, the simplest reading is used and noted in web/README.md."
+
   - id: lora-airtime
     name: LoRa airtime and TDMA
     tag: MODELLED
     milestone: M3
-    summary: "Planned: airtime formula, TDMA slots, collisions, duty-cycle accounting and SF switching, using the same airtime code as the budget script."
+    summary: "Airtime from Semtech AN1200.13 with the same constants as lora_budget.py, sensitivity per SF/BW, idle SF9/125 kHz 4 s and event SF7/500 kHz 500 ms superframes, slotted alerts, capture and duty accounting."
     evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/sim/experiments/lora_budget.py"
     upgrade: "MODELLED to REAL: compare with LoRa logs from the field."
+    bias: "Fixed 10 ms tick with sub-tick transmit times. The slot map is capped so the beacon fits its window."
 
   - id: lora-path-loss
     name: LoRa path loss
     tag: ASSUMED
     milestone: M3
-    summary: "Planned: log-distance path loss with log-normal shadowing. The exponent is not measured."
+    summary: "Log-distance path loss with PL_1M_DB and exponent 3, per-link log-normal shadowing (sigma 6 dB, fixed from the seed), per-packet fading (sigma 2 dB) and ITU-R P.526 knife-edge diffraction when the M0 heightmap blocks the path."
     evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/docs/research/02-information-budget.md"
     upgrade: "ASSUMED to REAL: Phase 2 link measurements."
+    bias: "The exponent and both sigma values are assumptions. Terrain diffraction samples the heightmap on a 64-point path."
+
+  - id: lora-mac
+    name: LoRa MAC and gateway scheduler
+    tag: MODELLED
+    milestone: M3
+    summary: "Gateway beacons, idle and event superframes, slot assignment, DETECT_START contention, HEALTH every 75 idle superframes staggered by node id, ranging pairs, snippet requests and mode switching on detections."
+    evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/docs/protocol-v0.md"
+    upgrade: "TS stand-in for the gateway scheduler; moves to the Python gateway in M4."
+    bias: "A node repeats DETECT_START until it is decoded, which the v0 spec leaves open. The beacon carries at most 7 idle or 8 event assignments."
+
+  - id: lora-node-stub
+    name: Node detection stub
+    tag: STUB
+    milestone: M3
+    summary: "What a node reports before the M2 detector core exists: a band-level threshold (default 6 dB for 0.5 s), bearing for array nodes, confidence, class and line frequencies from truth with noise, plus 1-bit snippet audio."
+    evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/docs/web-demo-plan.md"
+    upgrade: "STUB to SAME CODE in M2: the firmware detector core, built to WASM."
+    bias: "Detection fields follow truth, not a detector. Bearings are truth plus N(0, 5 degrees). The UI marks the stub in big letters."
 
   - id: ranging
     name: Ranging error
     tag: ASSUMED
     milestone: M3
-    summary: "Planned: ranging error model with noise, drift and a static non-line-of-sight bias."
-    evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/docs/research/06-ranging-and-health.md"
+    summary: "Per sweep the range is true distance plus N(0, 4 m) and a static NLOS bias (p 0.25, up to 12 m), only for links up to 2.2 x 350 m. Moving a node changes its next result."
+    evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/sim/experiments/ranging_health.py"
     upgrade: "ASSUMED to REAL: measure ranging between neighbouring nodes in Phase 2."
+    bias: "The MAC models the RANGING_RESULT frame, not the full RTToF request and response."
 
   - id: health-report
     name: Health report encoder
-    tag: SAME CODE
+    tag: MODELLED
     milestone: M3
-    summary: "Planned: the real 23-byte health report encoder from the node core."
+    summary: "The 152-bit report in HEALTH_FIELDS order, packed by the v0 encoder. Sim state fills the measured fields; the energy, temperature, clock and GNSS fields come from simple models."
     evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/docs/research/06-ranging-and-health.md"
-    upgrade: "Already SAME CODE once the node core is built to WASM."
+    upgrade: "MODELLED to SAME CODE when the node core's encoder is built to WASM in M2."
+    bias: "Values are simulated, and the field provenance table in the UI marks which are measured and which are assumed."
 
   - id: energy-model
     name: Battery and energy model
     tag: ASSUMED
     milestone: M3
-    summary: "Planned: simple battery, solar and temperature model that feeds the health report."
+    summary: "Simple battery, solar, temperature and clock model that feeds the health report: 2 mA average, a 1 W panel at 0.35 useful sun, 2.5 ppm clock drift."
     evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/docs/research/04-hardware-boundaries.md"
     upgrade: "ASSUMED to REAL: bench current and solar measurements."
+    bias: "Not fitted to a node. The values show that the report carries them, not what a real node would read."
 
   - id: provisioning-modem
     name: Provisioning modem

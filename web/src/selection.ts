@@ -3,4 +3,5 @@ export type Selection =
   | { kind: 'drone'; id: number }
   | { kind: 'gateway' }
   | { kind: 'radar' }
+  | { kind: 'packet'; id: number }
   | null;
