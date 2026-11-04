@@ -141,6 +141,12 @@ Repo, research docs 01–06, simulation experiments, and real drone recordings (
 - **Exit:** simulated crossing detection ≥ 95% for target classes below 100 m altitude.
   Simulated false alarms ≤ 1 per km of perimeter per day on real background audio.
 
+### Web demo (parallel track from Phase 1)
+A browser simulation of the whole perimeter, running the real node core (C → WebAssembly) and
+gateway code (Python via Pyodide), with every panel tagged as real, same code, modelled, assumed
+or stub. Milestones M0–M5, ~10–12 focused weeks; M2 and M4 share work with Phase 1.
+See [docs/web-demo-plan.md](docs/web-demo-plan.md).
+
 ### Phase 2: Bench node (2–3 weeks)
 - ESP32-S3 I²S capture from 1 and 4 mics. The detector core builds natively, under QEMU-S3
   in CI, and on hardware.
@@ -203,6 +209,7 @@ Repo, research docs 01–06, simulation experiments, and real drone recordings (
 
 - [ ] Phase 1: build `sim/acoustics` out of the experiment code, and collect negative background recordings.
 - [ ] Phase 1: a detector baseline with an adaptive harmonic band, scored for detection and false alarms on real audio.
+- [ ] Web demo M0–M1: 3D world, flight controls, provenance ledger, acoustic engine with golden tests.
 - [ ] Order a bench kit:
   - 2× RAK4631 + 2× PDM mic breakouts (detector node)
   - 2× LR2021 evaluation kit (XIAO nRF54L15), for ranging and the ranging-capable detector node

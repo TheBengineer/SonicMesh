@@ -17,4 +17,4 @@ It complements radar: acoustic covers the low, close-in airspace where radar str
 
 ## Status
 
-Research and simulation. See [PLAN.md](PLAN.md) for the architecture, phased plan and risks, and [docs/research](docs/research) for the findings behind it.
+Research and simulation. See [PLAN.md](PLAN.md) for the architecture, phased plan and risks, [docs/research](docs/research) for the findings behind it, and [docs/web-demo-plan.md](docs/web-demo-plan.md) for the planned browser simulation.
