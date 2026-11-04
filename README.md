@@ -1,7 +1,7 @@
 # SonicMesh
 
-A mesh of low-cost microcontroller sensor nodes that detects and tracks small drones at long range.
-Each node can only hear a drone a few hundred metres away; the network gets its range by spreading many nodes out and combining their detections.
+A loose perimeter of low-cost microcontroller acoustic nodes that detects small drones crossing at low altitude.
+It complements radar: acoustic covers the low, close-in airspace where radar struggles with clutter, and radar covers high and distant targets.
 
 **Node (~$70–95):** ESP32-S3, 2–4 I²S MEMS mics, SX1262 LoRa, GNSS with PPS, solar + 18650.
 
@@ -13,4 +13,4 @@ Each node can only hear a drone a few hundred metres away; the network gets its 
 
 ## Status
 
-Planning. See [PLAN.md](PLAN.md) for the architecture, BOM, phased prototype plan, and risks.
+Research and simulation. See [PLAN.md](PLAN.md) for the architecture, phased plan and risks, and [docs/research](docs/research) for the findings behind it.

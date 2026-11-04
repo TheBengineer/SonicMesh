@@ -1,180 +1,173 @@
 # SonicMesh — Prototyping Plan
 
-Goal: a mesh of low-cost, microcontroller-based sensor nodes that together detect, and roughly
-locate, small drones (Group 1 UAS, < 25 kg) at ranges well beyond what any one cheap sensor can do alone.
+**Goal:** a loose perimeter of cheap, microcontroller-based acoustic sensor nodes that detects
+small drones (Group 1 UAS, < 25 kg) crossing it at low altitude. It works alongside a radar system
+that covers high and distant targets.
 
-"Long range" here means the **network's** coverage, not each node's. A single cheap node can hear
-or sense a small quadcopter at a few hundred metres at best. Many nodes, spread out and fused,
-can cover kilometres. The prototype has to prove that this trade works.
+The perimeter is a tripwire. For each crossing it answers *did something cross, where along the
+line, which way, and when*, then cues radar or a camera to take over. Precise localisation is a
+bonus, not the core requirement.
 
----
-
-## 1. Physics first: what a cheap node can and can't do
-
-| Modality | What it senses | Realistic single-node range (small quad) | Node cost | Notes |
-|---|---|---|---|---|
-| **Acoustic** (MEMS mic array) | Rotor blade-pass harmonics, roughly 100 Hz–5 kHz | 100–300 m in quiet rural conditions; 50–150 m in urban or windy conditions | $15–40 | Core modality (the project's name). Works on drones with no RF link (autonomous or fiber-guided). Wind and traffic are the main problems. |
-| **Remote ID receiver** (Wi-Fi beacon/NAN + BLE 4/5) | ASTM F3411 broadcast of drone position and ID | 300 m–1 km+ (BLE Long Range, Wi-Fi) | ~$5 (on the same ESP32) | Almost free to add. Catches only compliant drones, but those give exact GPS position, which is very useful as **ground truth** for training the acoustic side. |
-| **Passive RF energy** (2.4/5.8 GHz control/video links) | Activity in the drone's control and video links | 500 m–2 km | $10–30 (ESP32 Wi-Fi sniffing; nRF/CC2500 RSSI sweep) | Detects that something is transmitting; poor at telling what it is. Receive-only. |
-| Optical/IR | — | — | — | Out of scope for MCU nodes. Could be added later as a cueable camera at the gateway. |
-
-**Decision:** acoustic is the primary sensor. Remote ID and RF-energy sniffing ride along on the
-same ESP32 at almost no extra cost. They add detections, and Remote ID supplies labelled training data.
-
-### Acoustic range budget (rule of thumb)
-- Source level of a small quad at 1 m: about 70–80 dB(A); larger multirotors are louder.
-- Spherical spreading costs −6 dB per doubling of distance, so −40 dB at 100 m and −50 dB at 300 m. Air absorption on top of that is significant above ~2 kHz.
-- Rural background is 30–40 dB(A); suburban is 45–55 dB(A).
-- So, with narrowband harmonic processing (which gains 10–20 dB over broadband), expect **~150–300 m**
-  per node. **Node spacing of 200–400 m** gives overlapping coverage. Phase 2 field tests confirm or correct these numbers.
+Research so far, which this plan builds on:
+- [01: TDOA, processing, boards, emulation](docs/research/01-tdoa-processing-hardware.md)
+- [02: information budget over LoRa](docs/research/02-information-budget.md)
+- [03: real drone recordings](docs/research/03-real-hover-audio.md)
 
 ---
 
-## 2. System architecture
+## 1. Concept: acoustic below, radar above
 
-```
- ┌──────────── Sensor node (×N) ────────────┐        ┌──────── Gateway ────────┐
- │ 2–4× I²S MEMS mics (ICS-43434 / SPH0645) │        │ Pi 5 / mini-PC          │
- │ ESP32-S3 (DSP + TinyML, Wi-Fi/BLE RID)   │  LoRa  │ LoRa concentrator/node  │
- │ GNSS w/ PPS (time sync + self-location)  │ ─────► │ Fusion + TDOA/bearing   │
- │ SX1262 LoRa radio (mesh)                 │  mesh  │ Tracker (Kalman/GNN)    │
- │ 18650 + 1–2 W solar, weatherproof box    │        │ Map UI, logging, alerts │
- └──────────────────────────────────────────┘        └─────────────────────────┘
-```
-
-**On the node (edge):** the node processes audio locally and sends only compact detections.
-Raw audio is far too much data for LoRa.
-1. Capture audio at 16 kHz, 24-bit I²S, with a ring buffer.
-2. Run a 1024-point FFT per 64 ms frame, then harmonic-comb scoring: look for a fundamental of 80–400 Hz
-   with ≥ 3 harmonics that stays stable over about 0.5 s.
-3. Pass candidates to a small CNN on log-mel features (TFLite Micro / Edge Impulse on the ESP32-S3) to
-   reject cars, lawnmowers, aircraft and birds.
-4. With 2–4 mics, estimate a local bearing with GCC-PHAT. Mic spacing of 5–15 cm gives coarse direction of arrival.
-5. Send a detection message (about 30–50 bytes): node ID, GPS-time timestamp (µs), confidence,
-   fundamental frequency, bearing ± uncertainty, SNR, class. Remote ID and RF hits are separate message types.
-
-**Mesh:** LoRa (SX1262, 868/915 MHz).
-- Start with **Meshtastic firmware** on a separate radio, or its protocol, to get multi-hop working for free.
-  Move to a lean custom flood/managed-flood protocol only if latency or airtime becomes a problem.
-- Airtime budget: at SF7/125 kHz, a 40-byte packet takes about 70 ms. Duty-cycle limits (1% in the EU)
-  allow roughly 50 packets per node per hour if done naively, so **rate-limit and aggregate**:
-  one message per track per 2–5 s, plus a heartbeat every 5 min.
-- Fallback for dense bench tests: ESP-NOW (higher bandwidth, ~200 m range).
-
-**Gateway (fusion):**
-- Associate detections from multiple nodes in time (GPS-synced timestamps).
-- Localize: **bearing intersection** from nodes with arrays, plus **TDOA** on harmonic onset or
-  envelope features across nodes. Coarse but workable at ~1 ms timing accuracy, which corresponds to ~0.34 m of sound travel.
-  Use received level against modelled spreading as a weak range prior.
-- Tracker: constant-velocity Kalman filter with gated nearest-neighbour association, then confirm and delete tracks.
-- Output: a live map (web UI over Leaflet/OpenStreetMap), event log, alerts, and stored raw detections for replay.
-
-**Time sync:** a GNSS PPS interrupt disciplines the ESP32 timer, which should achieve ≤ 10 µs.
-That is more than enough for acoustic TDOA, where the error budget is dominated by the propagation
-medium (wind, temperature), not the clock.
-
----
-
-## 3. Reference node BOM (prototype quantities)
-
-| Part | Example | ≈ USD |
+| | Acoustic perimeter (this project) | Radar |
 |---|---|---|
-| MCU | ESP32-S3-DevKitC-1 (N16R8) | 10 |
-| Mics | 4× ICS-43434 I²S breakout (or 2× for cheap nodes) | 16–24 |
-| LoRa | SX1262 module (Waveshare/EBYTE), or Heltec/LilyGO board with integrated LoRa | 8–15 |
-| GNSS | u-blox M10 / ATGM336H with PPS out | 8–15 |
-| Power | 18650 cells ×2, CN3791 solar charger, 2 W panel | 15 |
-| Enclosure | IP65 box, acoustic mesh/foam wind-screen, mast mount | 10–15 |
-| **Total** | | **≈ $70–95 / node** |
+| Strong at | Low, slow, terrain-hugging drones close to the line, including RF-silent ones | High and distant targets, wide-area tracking |
+| Weak at | Range (a few hundred m per node), wind, high-altitude targets | Ground clutter, multipath, terrain masking, birds near the ground |
+| Output | Crossing alerts: segment, time, direction, class, confidence | Tracks |
 
-The target cost for a production-like node is **<$60**. Gateway: Raspberry Pi 5 + LoRa HAT ≈ $120.
+**Fusion.** Acoustic alerts cue the radar (or a PTZ camera) to the right sector at low elevation.
+Radar tracks heading toward the perimeter raise node sensitivity in that segment. One shared track
+picture lives at the gateway.
 
-Power: ESP32-S3 continuous DSP draws about 80–120 mA at 3.3 V, roughly 0.35 W, or about 8.5 Wh/day.
-That is feasible on 2× 18650 (~22 Wh) plus a 2 W panel in reasonable sun. Duty-cycling
-(a low-power wake-on-sound stage, see Phase 5) is the long-term lever.
+## 2. What the research established
 
----
+1. **Continuous drone sound is enough for timing. No crisp event is needed.**
+   - Rotor speeds wobble constantly under flight control. Measured: ~0.6% for a GPS-hovering
+     Matrice 300, 1–3% for a Mini 3 Pro, and 1.3–2% at the steadiest for a DIY FPV quad in
+     manual mode.
+   - Real time of flight between real microphones matched geometry to 4–7 cm.
+   - Heavy, stable drones wobble least, so they're the hardest case. Drones in real flight
+     add more wobble.
+2. **Detection is cheap. RAM matters more than CPU.**
+   - FFT, harmonic detection, a small CNN and bearings fit in < 25% of one ESP32-S3 core.
+   - Buffering audio for timing needs PSRAM.
+3. **The baseline traffic fits plain LoRa easily.** Detection, confidence, bearing, level and
+   harmonic frequencies take ~40–70 bits per node per update, ~3 kbit/s for a 12-node event.
+   GPS-synced TDMA slots make node ID and timestamps almost free.
+4. **Precision TDOA/FDOA is an optional add-on, carried in bursts.**
+   - Nodes send 1-bit, 4 kS/s audio clips (2–4 kbit per node), aligned using bearing-based priors.
+   - This gives sub-ms TDOA and sub-m/s Doppler down to about −5 dB (slow) or 0 dB (50 m/s).
+   - It needs LoRa switched to SF5–SF7 / 500 kHz during events. With 300–400 m spacing, those
+     settings keep 28–33 dB of link margin.
+5. **Bearings are the key coarse measurement.** Matching nodes without bearings needs about +10 dB
+   more signal.
+6. **Drone classes span ~80 Hz** (large camera drones) **to ~1 kHz** (FPV) blade-pass
+   fundamentals. Detector bands and features must adapt to that range, not be fixed.
+7. **No MCU emulator models I²S audio input.** So simulate at the firmware HAL boundary: the node's
+   processing core is built natively and fed simulated audio. Emulators and real boards are only
+   for ISA, memory and timing checks.
 
-## 4. Phased prototype plan
+## 3. System design
 
-Each phase has an exit criterion. Don't advance until it's met; a failed criterion means re-plan.
+**Node types.**
+- *Detector node (~$40–60):* ESP32-S3 (N16R8, 8 MB PSRAM), 1 I²S MEMS mic, SX1262 LoRa,
+  GNSS with PPS, solar + 18650. It reports detections, level and harmonic frequencies.
+- *Array node (~$70–95):* the same, with 4 mics (5–15 cm aperture) for bearings. Placed every
+  2nd–3rd position, or at every position on critical segments.
+- Both scan for Remote ID (BLE / Wi-Fi) for free.
 
-### Phase 0 — Groundwork (1–2 weeks)
-- Set up the repo: `firmware/` (ESP-IDF or PlatformIO), `gateway/` (Python), `tools/` (data capture,
-  labelling), `data/` (git-lfs or external storage), `docs/`.
-- Collect acoustic datasets: public drone audio sets (e.g. DREGON, the Al-Emadi drone audio dataset,
-  ESC-50 for negatives), plus our own recordings.
-- Line up test drones and legal flying. US: Part 107 or recreational rules, a site away from controlled
-  airspace, and landowner permission. All RF work is **receive-only**: no jamming, no spoofing.
-- **Exit:** repo skeleton, dataset index, flying site and drones confirmed.
+**Perimeter geometry.**
+- **Spacing ≈ 1.5 × reliable detection radius.** If the 150–300 m estimate holds, that's
+  roughly 200–400 m. Phase 3 measures the real value.
+- A crossing at 50 m/s then spends ~6–12 s in range of at least one node.
+- Optional second row ~100 m behind the first, for direction of travel without arrays.
 
-### Phase 1 — Single node on the bench (2–3 weeks)
-- I²S capture from 1 mic, then 4 mics, on the ESP32-S3. Stream raw audio over USB/Wi-Fi to a laptop for recording.
-- Prototype the detector in Python first (FFT + harmonic comb + small CNN) on recorded and public data.
-  Then port it to the MCU (ESP-DSP for FFT, TFLite Micro for the CNN).
-- Add a Remote ID scanner (BLE + Wi-Fi beacon/NAN parsing; opendroneid-core-c is a reference).
-- **Exit:** on the MCU, detector **≥ 90% recall at ≤ 1 false alarm/hour** on held-out recordings
-  at realistic SNR; inference ≤ 50 ms per frame; Remote ID decoded from a test drone.
+**Processing on the node.**
+1. 16 kHz capture into a ring buffer, which also feeds a PSRAM buffer for the optional TDOA clips.
+2. FFT with harmonic-comb scoring across an 80–2000 Hz fundamental/harmonic range.
+3. A small CNN to reject look-alike sounds (cars, mowers, generators, aircraft, insects).
+4. Bearing (GCC-PHAT) on array nodes.
+5. Only a detection with ≥ 2 nodes agreeing, or a sustained single-node track, raises a crossing alert.
 
-### Phase 2 — Single node in the field: range characterization (2 weeks)
-- Fly 2–3 drone types (e.g. a DJI Mini class, a 5" FPV quad, a larger ~2 kg quad) on radial legs
-  out to 600 m at several altitudes. Log drone GPS as ground truth.
-- Measure detection probability vs. range, wind speed and background level. Measure bearing error vs. SNR.
-- Test wind-screen designs. Wind is the biggest real-world killer.
-- **Exit:** measured **Pd(range)** curves per drone class. These set the node spacing for Phase 3.
-  If the 50% detection range is < 100 m, revisit the mic count, beamforming, or the modality mix before scaling.
+**Mesh and messages.**
+- *Idle:* a robust LoRa setting with a 5-minute heartbeat.
+- *Event:* switch to a fast setting, with GPS-synced TDMA slots.
+- *Baseline messages:* detection + confidence, bearing, band level, 1–2 harmonic-line frequencies,
+  class on change. A Doppler trend across nodes gives direction of travel.
+- *Optional burst layer:* the gateway requests aligned 1-bit audio clips from the 2–4 best nodes
+  for precise TDOA/FDOA.
 
-### Phase 3 — Small mesh (4–6 nodes) (3–4 weeks)
-- Integrate LoRa mesh, GNSS time sync, and node self-survey (average GPS fixes at power-up).
-- Gateway v0: ingest, store, map display of raw detections.
-- Measure delivery rate, end-to-end latency and airtime use under bursty detection load.
-- **Exit:** ≥ 95% message delivery across ≥ 2 hops; **detection-to-gateway latency ≤ 5 s**;
-  nodes run unattended for 72 h.
+**Gateway.**
+- Raspberry Pi with a LoRa radio.
+- Fuses nodes into crossing events and tracks.
+- Exposes an interface for the radar/C2 system: alerts out, cues in.
+- Logs everything for replay.
 
-### Phase 4 — Localization and tracking (3–4 weeks)
-- Implement bearing intersection, TDOA, and fused solving, plus the Kalman tracker.
-- Fly scripted paths through a 4–6 node grid (spacing taken from Phase 2) and compare tracks with drone GPS.
-- **Exit:** track established within **10 s** of entering coverage; median position error **≤ 30 m**;
-  ≤ 1 false track per day in field conditions.
+## 4. Phased plan
 
-### Phase 5 — Scale and harden (ongoing)
-- 10–20 nodes over 1–2 km². Test node loss and self-healing of the mesh.
-- Power: add a wake-on-sound stage. Options are an analog band-pass and comparator, or a low-power
-  co-processor (e.g. ESP32-S3 ULP, or a separate nRF52/RP2040) that keeps the main core asleep.
-- Over-the-air config and firmware updates over Wi-Fi when serviced (LoRa is too slow for full images).
-- Weatherproofing, a cost-down pass on the BOM, and an enclosure design for manufacture.
-- Optional: an SDR (RTL-SDR/HackRF) at the gateway for wider RF context; a PTZ camera cued by tracks.
+Each phase has an exit criterion. A failed criterion means re-plan, not push on.
 
-**Rough total to an end-of-Phase-4 demo: ~3–4 months part-time, ~$1–1.5k in hardware**
-(8 nodes, gateway, 2–3 test drones excluded).
+### Phase 0: Groundwork. *Mostly done.*
+Repo, research docs 01–03, simulation experiments, and real drone recordings (DroneNoise Database).
 
----
+### Phase 1: Simulator and detector baseline (3–4 weeks)
+- **Acoustic world, `sim/acoustics`.** Real and synthetic drone sources and flight paths.
+  Propagation with ground reflection, wind and turbulence. Real background scenes.
+- **Negative datasets.** Real recordings of wind, traffic, mowers, aircraft and birds.
+- **Detector in Python**, fronting a portable C/C++ core behind a HAL:
+  harmonic comb with adaptive band, plus a small CNN.
+- **Perimeter scenario runner.** N nodes along a line, random crossings (class, altitude, speed,
+  wind), with a simple LoRa/TDMA model.
+- **Exit:** simulated crossing detection ≥ 95% for target classes below 100 m altitude.
+  Simulated false alarms ≤ 1 per km of perimeter per day on real background audio.
 
-## 5. Key risks and mitigations
+### Phase 2: Bench node (2–3 weeks)
+- ESP32-S3 I²S capture from 1 and 4 mics. The detector core builds natively, under QEMU-S3
+  in CI, and on hardware.
+- Measure CPU, RAM and power on the board.
+- Remote ID scanner.
+- **Exit:** the detector on the MCU matches its native build on recorded audio; ≤ 25% CPU;
+  daily energy fits 2× 18650 plus a 2 W panel.
 
-| Risk | Impact | Mitigation |
-|---|---|---|
-| Acoustic range lower than hoped (wind, noise) | Needs denser, costlier mesh | Measure early (Phase 2). Better wind screens. Narrowband integration. Lean on RF/Remote ID for far detection. |
-| False alarms from engines, mowers, insects, aircraft | Alert fatigue | Need confirmation by ≥ 2 nodes or a second modality. Hard-negative mining from field logs. |
-| LoRa airtime / duty-cycle limits | Lost or late detections | Aggregate into tracks on the node; send only changes in state. Adaptive spreading factor. ESP-NOW for dense clusters. |
-| TDOA degraded by wind and temperature gradients | Poor localization | Prefer bearings from arrays; use TDOA as a soft constraint. Log temperature. |
-| Quiet or gliding drones; RF-silent autonomous drones | Missed detections | Acoustic still covers RF-silent drones. Accept fixed-wing gliding as a known gap. |
-| Power budget in winter / low sun | Node downtime | Wake-on-sound duty cycling. Bigger panel. Report health in heartbeat. |
-| Regulatory | Legal exposure | Receive-only RF. ISM-band LoRa within duty limits. Legal test flights. Privacy: nodes never store or send raw audio once out of R&D mode. |
+### Phase 3: Field characterisation (2–3 weeks)
+- Synced ground recordings of real flights (including the user's FPV quad) at 2+ points.
+- Detection range against background noise and wind, for each drone class.
+- Wind-screen designs.
+- Multi-day unattended false-alarm logging.
+- **Exit:** measured detection-probability-vs-range curves, which set node spacing.
+  False-alarm rate within 3× of simulation. If reliable range is < 100 m, revisit the mic count,
+  array processing, or the role of each node type.
 
----
+### Phase 4: Perimeter pilot (3–4 weeks)
+- 6–10 nodes on a 1–2 km line, with LoRa TDMA and the gateway.
+- Scripted crossings at different speeds, altitudes and directions.
+- Define and stub the radar/C2 interface.
+- **Exit:**
+  - ≥ 95% of crossings below 100 m detected.
+  - Correct segment and direction ≥ 90%.
+  - Alert latency ≤ 5 s.
+  - False alarms ≤ 1/km/day.
+  - 72 h unattended operation.
 
-## 6. Open questions to decide early
-1. **Region / band:** EU868 or US915? This sets the LoRa duty-cycle rules.
-2. **Threat envelope:** which drone classes and what altitudes matter most? This drives the
-   mic band and the CNN training set.
-3. **Deployment context:** rural perimeter vs. urban? Background noise changes node spacing by about 2×.
-4. **Build vs. reuse for the mesh:** Meshtastic as-is, or a custom protocol from the start?
-5. **Bearing vs. TDOA emphasis:** 4-mic array nodes (better bearing, more cost) vs. cheap 1-mic nodes
-   used only for TDOA. A mixed fleet is a strong option to test in Phase 4.
+### Phase 5: Integration and hardening (ongoing)
+- Radar cueing both ways.
+- Optional TDOA burst layer where precision helps.
+- Wake-on-sound low-power stage.
+- Over-the-air updates when serviced.
+- Enclosure and BOM cost-down toward < $40 per detector node.
+
+## 5. Key risks
+
+| Risk | Mitigation |
+|---|---|
+| Wind noise limits range | Wind-screen R&D in Phase 3. Raise thresholds adaptively when the node's anemometer or self-noise rises. Lean on radar in high wind. |
+| False alarms from look-alike sounds | Require ≥ 2-node agreement. Hard-negative mining from field logs. Cross-check with radar. |
+| Quiet or large stabilised drones (least wobble, low tones) | Adaptive bands down to ~80 Hz. Treat them as the design worst case in simulation. |
+| Gaps in the line (node failure, terrain) | Spacing margin, heartbeat monitoring, optional second row. |
+| LoRa congestion during events | TDMA, aggregate messages per track, optional burst layer only on request. |
+| Regulatory | Receive-only RF. LoRa within regional duty and dwell rules. Legal test flights. No raw audio stored or sent outside R&D. |
+
+## 6. Open questions
+
+1. **Radar:** which system, its low-altitude floor and coverage, and its interface (alerts, cues, track format)?
+2. **Perimeter:** length, terrain, and how dense the background noise is (rural or urban)?
+3. **Target classes:** consumer camera drones, FPV, larger fixed-wing? This drives the bands and the training data.
+4. **Region:** EU868 or US915 (duty-cycle rules)?
 
 ## 7. Immediate next steps
-- [ ] Order 3 dev nodes' worth of parts (ESP32-S3, 4× ICS-43434, SX1262, GNSS w/ PPS).
-- [ ] Create the repo skeleton and a PlatformIO/ESP-IDF I²S capture-to-USB firmware.
-- [ ] Download and index public drone and negative audio datasets. Build the Python detector baseline.
-- [ ] Book the flying site and confirm the test drones.
+
+- [ ] Phase 1: build `sim/acoustics` out of the experiment code, and collect negative background recordings.
+- [ ] Phase 1: a detector baseline with an adaptive harmonic band, scored for detection and false alarms on real audio.
+- [ ] Order a bench kit:
+  - 2× ESP32-S3 N16R8
+  - 8× ICS-43434 mics
+  - 1× LilyGO T-Beam Supreme
+  - 1× Raspberry Pi Zero 2 W + GNSS module, for synced field recording
