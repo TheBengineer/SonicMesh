@@ -1,0 +1,41 @@
+{
+  "format": "sonicmesh-scenario",
+  "version": 1,
+  "name": "Line of 13 nodes, FPV crossing at 20 m/s",
+  "seed": 20261104,
+  "terrain": {
+    "size_m": [5000, 2000],
+    "amplitude_m": 20,
+    "wavelength_m": 900,
+    "road_y_m": 80
+  },
+  "gateway": { "x": 0, "y": -250 },
+  "nodes": [
+    { "id": 1, "kind": "detector", "x": -2100, "y": 0 },
+    { "id": 2, "kind": "detector", "x": -1750, "y": 0 },
+    { "id": 3, "kind": "array", "x": -1400, "y": 0 },
+    { "id": 4, "kind": "detector", "x": -1050, "y": 0 },
+    { "id": 5, "kind": "detector", "x": -700, "y": 0 },
+    { "id": 6, "kind": "array", "x": -350, "y": 0 },
+    { "id": 7, "kind": "detector", "x": 0, "y": 0 },
+    { "id": 8, "kind": "detector", "x": 350, "y": 0 },
+    { "id": 9, "kind": "array", "x": 700, "y": 0 },
+    { "id": 10, "kind": "detector", "x": 1050, "y": 0 },
+    { "id": 11, "kind": "detector", "x": 1400, "y": 0 },
+    { "id": 12, "kind": "array", "x": 1750, "y": 0 },
+    { "id": 13, "kind": "detector", "x": 2100, "y": 0 }
+  ],
+  "drones": [
+    {
+      "id": 1,
+      "class": "fpv",
+      "path": {
+        "kind": "crossing",
+        "from": { "x": -900, "y": 600 },
+        "to": { "x": 900, "y": -600 },
+        "speed_mps": 20,
+        "altitude_m": 30
+      }
+    }
+  ]
+}

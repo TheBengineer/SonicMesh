@@ -1,0 +1,145 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "SonicMesh scenario",
+  "description": "Initial world for a run. Positions are metres in sim coordinates: x east, y north, origin at the terrain centre. Altitudes are metres above the terrain datum (0 m). Edits made during a run are in the input log, not here.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format", "version", "name", "seed", "terrain", "gateway", "nodes", "drones"],
+  "properties": {
+    "format": { "const": "sonicmesh-scenario" },
+    "version": { "const": 1 },
+    "name": { "type": "string", "minLength": 1 },
+    "seed": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+    "terrain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["size_m", "amplitude_m", "wavelength_m", "road_y_m"],
+      "properties": {
+        "size_m": {
+          "type": "array",
+          "items": { "type": "number", "exclusiveMinimum": 0 },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "amplitude_m": { "type": "number", "minimum": 0 },
+        "wavelength_m": { "type": "number", "exclusiveMinimum": 0 },
+        "road_y_m": { "type": "number" }
+      }
+    },
+    "gateway": { "$ref": "#/definitions/vec2" },
+    "nodes": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/node" }
+    },
+    "drones": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/drone" }
+    }
+  },
+  "definitions": {
+    "vec2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y"],
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" }
+      }
+    },
+    "node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "x", "y"],
+      "properties": {
+        "id": { "type": "integer", "minimum": 0 },
+        "kind": { "enum": ["detector", "array"] },
+        "x": { "type": "number" },
+        "y": { "type": "number" }
+      }
+    },
+    "drone": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "class", "path"],
+      "properties": {
+        "id": { "type": "integer", "minimum": 0 },
+        "class": { "enum": ["fpv", "mini", "matrice"] },
+        "flight": { "enum": ["manual", "gps"], "default": "gps" },
+        "path": { "$ref": "#/definitions/path" }
+      }
+    },
+    "path": {
+      "oneOf": [
+        {
+          "description": "Flown by stick input. start is where the drone appears.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "start"],
+          "properties": {
+            "kind": { "const": "manual" },
+            "start": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["x", "y", "altitude_m"],
+              "properties": {
+                "x": { "type": "number" },
+                "y": { "type": "number" },
+                "altitude_m": { "type": "number", "minimum": 0 }
+              }
+            }
+          }
+        },
+        {
+          "description": "Holds a point at a fixed altitude.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "at", "altitude_m"],
+          "properties": {
+            "kind": { "const": "hover" },
+            "at": { "$ref": "#/definitions/vec2" },
+            "altitude_m": { "type": "number", "minimum": 0 }
+          }
+        },
+        {
+          "description": "Straight line at a fixed altitude above datum, then holds at the end.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "from", "to", "speed_mps", "altitude_m"],
+          "properties": {
+            "kind": { "const": "crossing" },
+            "from": { "$ref": "#/definitions/vec2" },
+            "to": { "$ref": "#/definitions/vec2" },
+            "speed_mps": { "type": "number", "exclusiveMinimum": 0 },
+            "altitude_m": { "type": "number", "minimum": 0 }
+          }
+        },
+        {
+          "description": "Straight line at a fixed altitude above datum, repeated from end to start.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "from", "to", "speed_mps", "altitude_m"],
+          "properties": {
+            "kind": { "const": "out_and_back" },
+            "from": { "$ref": "#/definitions/vec2" },
+            "to": { "$ref": "#/definitions/vec2" },
+            "speed_mps": { "type": "number", "exclusiveMinimum": 0 },
+            "altitude_m": { "type": "number", "minimum": 0 }
+          }
+        },
+        {
+          "description": "Straight line at a fixed height above the ground.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "from", "to", "speed_mps", "clearance_m"],
+          "properties": {
+            "kind": { "const": "terrain_follow" },
+            "from": { "$ref": "#/definitions/vec2" },
+            "to": { "$ref": "#/definitions/vec2" },
+            "speed_mps": { "type": "number", "exclusiveMinimum": 0 },
+            "clearance_m": { "type": "number", "minimum": 0 }
+          }
+        }
+      ]
+    }
+  }
+}

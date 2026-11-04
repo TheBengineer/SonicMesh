@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="SonicMesh web demo: a browser simulation of an acoustic drone-detection perimeter." />
+    <link rel="icon" href="data:," />
+    <title>SonicMesh demo</title>
+  </head>
+  <body>
+    <div id="app">
+      <main id="viewport">
+        <div id="scene"></div>
+        <div id="toolbar" class="panel float">
+          <div class="group">
+            <span class="label">View</span>
+            <button data-view="orbit" aria-pressed="true">Orbit</button>
+            <button data-view="follow">Follow drone</button>
+            <button data-view="top">Top-down</button>
+          </div>
+          <div class="group">
+            <span class="label">Edit</span>
+            <button data-mode="select" aria-pressed="true">Select</button>
+            <button data-mode="add-node">+ Node</button>
+            <select id="place-kind" aria-label="Node type for new nodes">
+              <option value="detector">Detector</option>
+              <option value="array">Array</option>
+            </select>
+            <button data-mode="add-drone">+ Drone</button>
+            <select id="place-class" aria-label="Drone class for new drones">
+              <option value="fpv">FPV</option>
+              <option value="mini">Mini</option>
+              <option value="matrice">Matrice-class</option>
+            </select>
+          </div>
+          <div class="group">
+            <button id="select-radar">Radar</button>
+            <button id="open-whats-real">What's real?</button>
+            <button id="open-about">About</button>
+          </div>
+        </div>
+        <div id="legend" class="panel float"></div>
+        <div id="help" class="panel float hint">
+          Drag nodes and the gateway on the ground. Keys: WASD / arrows move, Q/E down/up, M manual or GPS mode,
+          P play/pause, . step, R replay, F follow, T truth, Del remove.
+        </div>
+      </main>
+      <aside id="inspector" class="panel"></aside>
+      <footer id="timeline" class="panel"></footer>
+    </div>
+    <dialog id="about-dialog" class="overlay"></dialog>
+    <dialog id="ledger-dialog" class="overlay wide"></dialog>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

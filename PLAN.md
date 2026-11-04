@@ -16,6 +16,8 @@ Research so far, which this plan builds on:
 - [05: acoustic provisioning](docs/research/05-acoustic-provisioning.md)
 - [06: LoRa ranging and health telemetry](docs/research/06-ranging-and-health.md)
 
+Design: [message format and schedule v0](docs/protocol-v0.md).
+
 ---
 
 ## 1. Concept: acoustic below, radar above
@@ -203,7 +205,7 @@ See [docs/web-demo-plan.md](docs/web-demo-plan.md).
 1. **Radar:** which system, its low-altitude floor and coverage, and its interface (alerts, cues, track format)?
 2. **Perimeter:** length, terrain, and how dense the background noise is (rural or urban)?
 3. **Target classes:** consumer camera drones, FPV, larger fixed-wing? This drives the bands and the training data.
-4. **Region:** EU868 or US915 (duty-cycle rules)?
+4. **Region:** EU868 or US915? [Protocol v0](docs/protocol-v0.md) targets US915: EU868's 1% duty cycle rules out the 500 kHz event layer as designed, so an EU build needs its own plan.
 
 ## 7. Immediate next steps
 

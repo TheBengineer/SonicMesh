@@ -1,0 +1,215 @@
+# Provenance ledger. One entry per component, tagged REAL, SAME CODE, MODELLED, ASSUMED or STUB.
+# The UI reads this file for badges and the "What's real?" page. milestone is the milestone that
+# brings the component in; entries past M0 are not in the demo yet.
+components:
+  - id: terrain
+    name: Terrain
+    tag: STUB
+    milestone: M0
+    summary: "Procedural heightmap from the scenario seed, about 5 km by 2 km. Visual only in M0."
+    evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/docs/web-demo-plan.md"
+    upgrade: "STUB to MODELLED in M1: Maekawa barrier attenuation for paths blocked by terrain."
+    bias: "No ground wave and no refraction once acoustics arrive."
+
+  - id: road
+    name: Road
+    tag: STUB
+    milestone: M0
+    summary: "Flat strip laid over the terrain. Visual only, no traffic or road noise yet."
+    evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/docs/web-demo-plan.md"
+    upgrade: "Road noise from real recordings (REAL) arrives with background sources in M1."
+
+  - id: trees
+    name: Trees
+    tag: STUB
+    milestone: M0
+    summary: "Low-poly trees in random clusters. No scattering and no foliage attenuation."
+    evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/docs/web-demo-plan.md"
+    upgrade: "STUB to MODELLED: ISO 9613-2 foliage excess attenuation, optional, from M1."
+    bias: "Cluster layout is random, not surveyed."
+
+  - id: node-detector
+    name: Detector node
+    tag: STUB
+    milestone: M0
+    summary: "Marker for a detector node. The node core is not in M0; the marker holds a position and a type."
+    evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/docs/research/04-hardware-boundaries.md"
+    upgrade: "STUB to SAME CODE in M2: the firmware detector core, built to WASM."
+
+  - id: node-array
+    name: Array node
+    tag: STUB
+    milestone: M0
+    summary: "Marker for an array node with four mics. Bearings are not computed in M0."
+    evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/docs/research/04-hardware-boundaries.md"
+    upgrade: "STUB to SAME CODE in M2: the firmware core computing bearings from four mics."
+
+  - id: gateway
+    name: Gateway
+    tag: STUB
+    milestone: M0
+    summary: "Marker for the gateway. It does not fuse detections yet."
+    evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/PLAN.md"
+    upgrade: "STUB to SAME CODE in M4: the gateway fusion code, run in Pyodide."
+
+  - id: radar
+    name: Radar dome
+    tag: STUB
+    milestone: M0
+    summary: "Wireframe coverage dome with a low-elevation floor. No detections, tracks or cues yet."
+    evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/docs/web-demo-plan.md"
+    upgrade: "STUB to REAL once a radar and its interface are chosen."
+    bias: "The dome is an idealised hemisphere with a fixed 3 degree floor."
+
+  - id: drone-dynamics
+    name: Drone flight dynamics
+    tag: MODELLED
+    milestone: M0
+    summary: "Point-mass flight with drag, speed limits and two modes: manual (keeps momentum) and GPS hover (stops when the sticks are centred). No attitude."
+    evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/docs/research/03-real-hover-audio.md"
+    upgrade: "MODELLED to REAL: fit the acceleration and drag to flight logs from the drones used in the field."
+    bias: "No attitude, wind or battery limits, so manoeuvres are smoother than a real airframe."
+
+  - id: drone-scripted-paths
+    name: Scripted drone paths
+    tag: MODELLED
+    milestone: M0
+    summary: "Kinematic crossing, out-and-back, hover and terrain-following paths at a set speed."
+    evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/sim/experiments/tdoa_feasibility.py"
+    upgrade: "Replace with logged flight trajectories when they exist."
+    bias: "Instant turns and no acceleration limit at path corners."
+
+  - id: drone-classes
+    name: Drone class presets
+    tag: ASSUMED
+    milestone: M0
+    summary: "Size, top speed, acceleration and drag for FPV, Mini and Matrice-class drones. Typical values, not measured."
+    evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/docs/research/03-real-hover-audio.md"
+    upgrade: "ASSUMED to REAL: measure the drones used in the trials."
+
+  - id: drone-sound-interactive
+    name: Drone sound, interactive
+    tag: MODELLED
+    milestone: M1
+    summary: "Synthetic quadrotor: four rotors, harmonics and blade-modulated broadband noise, with rotor speed following the flight."
+    evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/sim/experiments/tdoa_feasibility.py"
+    upgrade: "Timing statistics already fitted to REAL recordings. Add a direct comparison against them."
+    bias: "Not a recording. It cannot respond to the stick beyond small changes."
+
+  - id: drone-sound-replay
+    name: Drone sound, replay
+    tag: REAL
+    milestone: M1
+    summary: "DroneNoise and FPV recordings on a fixed path, pitch-shifted slightly with throttle."
+    evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/docs/research/03-real-hover-audio.md"
+    upgrade: "Pitch shift is MODELLED. Check the shift against the recordings' own throttle data."
+    bias: "Can only follow the path that was recorded."
+
+  - id: propagation
+    name: Sound propagation
+    tag: MODELLED
+    milestone: M1
+    summary: "Time-varying delay per path, so Doppler appears on its own. 1/r spreading, ground reflection by image source and air absorption."
+    evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/sim/experiments/tdoa_feasibility.py"
+    upgrade: "MODELLED to REAL: compare with field recordings at known distances."
+    bias: "Absorption is approximated, not the exact ISO 9613-1 curve."
+
+  - id: wind
+    name: Wind noise
+    tag: STUB
+    milestone: M1
+    summary: "Planned: mic wind noise from real recordings, scaled by wind speed, with a fixed refraction offset."
+    evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/docs/web-demo-plan.md"
+    upgrade: "STUB to REAL for the recordings, with refraction still STUB."
+    bias: "Refraction is ignored."
+
+  - id: turbulence
+    name: Turbulence
+    tag: STUB
+    milestone: M1
+    summary: "Planned: off in M1, then amplitude and travel-time jitter as in the feasibility study."
+    evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/sim/experiments/tdoa_feasibility.py"
+    upgrade: "STUB to MODELLED once added."
+    bias: "Without turbulence, TDOA is optimistic at range."
+
+  - id: background
+    name: Background sources
+    tag: REAL
+    milestone: M1
+    summary: "Planned: road, mower, generator and aircraft recordings placed as sources, with diffuse ambient noise per node."
+    evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/docs/web-demo-plan.md"
+    upgrade: "Check licences before any public build bundles a recording."
+    bias: "Recordings loop."
+
+  - id: mic
+    name: Microphone model
+    tag: MODELLED
+    milestone: M1
+    summary: "Planned: self-noise near 29 dB SPL, frequency response, PDM to PCM conversion and clipping."
+    evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/docs/research/04-hardware-boundaries.md"
+    upgrade: "MODELLED to REAL: measure the mics used in the nodes."
+
+  - id: lora-airtime
+    name: LoRa airtime and TDMA
+    tag: MODELLED
+    milestone: M3
+    summary: "Planned: airtime formula, TDMA slots, collisions, duty-cycle accounting and SF switching, using the same airtime code as the budget script."
+    evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/sim/experiments/lora_budget.py"
+    upgrade: "MODELLED to REAL: compare with LoRa logs from the field."
+
+  - id: lora-path-loss
+    name: LoRa path loss
+    tag: ASSUMED
+    milestone: M3
+    summary: "Planned: log-distance path loss with log-normal shadowing. The exponent is not measured."
+    evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/docs/research/02-information-budget.md"
+    upgrade: "ASSUMED to REAL: Phase 2 link measurements."
+
+  - id: ranging
+    name: Ranging error
+    tag: ASSUMED
+    milestone: M3
+    summary: "Planned: ranging error model with noise, drift and a static non-line-of-sight bias."
+    evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/docs/research/06-ranging-and-health.md"
+    upgrade: "ASSUMED to REAL: measure ranging between neighbouring nodes in Phase 2."
+
+  - id: health-report
+    name: Health report encoder
+    tag: SAME CODE
+    milestone: M3
+    summary: "Planned: the real 23-byte health report encoder from the node core."
+    evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/docs/research/06-ranging-and-health.md"
+    upgrade: "Already SAME CODE once the node core is built to WASM."
+
+  - id: energy-model
+    name: Battery and energy model
+    tag: ASSUMED
+    milestone: M3
+    summary: "Planned: simple battery, solar and temperature model that feeds the health report."
+    evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/docs/research/04-hardware-boundaries.md"
+    upgrade: "ASSUMED to REAL: bench current and solar measurements."
+
+  - id: provisioning-modem
+    name: Provisioning modem
+    tag: SAME CODE
+    milestone: M5
+    summary: "Planned: the real acoustic provisioning modem and latch, from the node core."
+    evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/docs/research/05-acoustic-provisioning.md"
+    upgrade: "Already SAME CODE once the node core is built to WASM."
+
+  - id: provisioning-channel
+    name: Provisioning audio channel
+    tag: MODELLED
+    milestone: M5
+    summary: "Planned: simulated phone audio through the channel model from the provisioning study."
+    evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/docs/research/05-acoustic-provisioning.md"
+    upgrade: "MODELLED to REAL: a real phone playing into a real mic, the bench check in that study."
+
+  - id: mcu-load
+    name: MCU load and power
+    tag: ASSUMED
+    milestone: M2
+    summary: "Planned: per-stage CPU and current costs from the hardware study."
+    evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/docs/research/04-hardware-boundaries.md"
+    upgrade: "ASSUMED to REAL with hardware in the loop, using a bench node over USB."
+    bias: "Browser timing is not MCU timing."
