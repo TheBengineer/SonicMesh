@@ -90,18 +90,13 @@ def path_delay(t, node, velocity):
 
 
 def receive(rng, src, t_src, t, node, velocity, snr_db):
-    phases, broadband, harm_amp, harm_phase = src
+    """src is synth_source() output, or a callable giving a recorded waveform at emission times."""
     tau = path_delay(t, node, velocity) + lowpass_noise(rng, len(t), 1.0, SIGMA_TURB)
     te = t - tau
-    x = np.zeros_like(t)
-    blade_mod = np.zeros_like(t)
-    for i in range(4):
-        ph = 2 * np.pi * np.interp(te, t_src, phases[i])
-        blade_mod += np.sin(ph)
-        for h in range(N_HARM):
-            x += harm_amp[h] * np.sin((h + 1) * ph + harm_phase[i, h])
-    bb = np.interp(te, t_src, broadband)
-    x += 0.5 * bb / bb.std() * (1 + 0.25 * blade_mod)
+    if callable(src):
+        x = src(te)
+    else:
+        x = _synth_at(src, t_src, te)
 
     # air absorption for the mean path length
     r = tau.mean() * C
@@ -113,6 +108,19 @@ def receive(rng, src, t_src, t, node, velocity, snr_db):
     noise = pink_noise(rng, len(x))
     noise *= np.sqrt(band_power(x) / band_power(noise) / 10 ** (snr_db / 10))
     return x + noise, tau
+
+
+def _synth_at(src, t_src, te):
+    phases, broadband, harm_amp, harm_phase = src
+    x = np.zeros_like(te)
+    blade_mod = np.zeros_like(te)
+    for i in range(4):
+        ph = 2 * np.pi * np.interp(te, t_src, phases[i])
+        blade_mod += np.sin(ph)
+        for h in range(N_HARM):
+            x += harm_amp[h] * np.sin((h + 1) * ph + harm_phase[i, h])
+    bb = np.interp(te, t_src, broadband)
+    return x + 0.5 * bb / bb.std() * (1 + 0.25 * blade_mod)
 
 
 def gcc_phat(x1, x2, max_lag, interp=8):
