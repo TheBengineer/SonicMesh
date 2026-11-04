@@ -12,6 +12,9 @@ Research so far, which this plan builds on:
 - [01: TDOA, processing, boards, emulation](docs/research/01-tdoa-processing-hardware.md)
 - [02: information budget over LoRa](docs/research/02-information-budget.md)
 - [03: real drone recordings](docs/research/03-real-hover-audio.md)
+- [04: hardware boundaries](docs/research/04-hardware-boundaries.md)
+- [05: acoustic provisioning](docs/research/05-acoustic-provisioning.md)
+- [06: LoRa ranging and health telemetry](docs/research/06-ranging-and-health.md)
 
 ---
 
@@ -51,7 +54,14 @@ picture lives at the gateway.
    more signal.
 6. **Drone classes span ~80 Hz** (large camera drones) **to ~1 kHz** (FPV) blade-pass
    fundamentals. Detector bands and features must adapt to that range, not be fixed.
-7. **No MCU emulator models I²S audio input.** So simulate at the firmware HAL boundary: the node's
+7. **Positions come from acoustic provisioning; radio ranging checks them.**
+   - The installer's phone plays its GPS fix to the node as sound while placing it: ~1.5 m error,
+     no GNSS on the node (doc 05).
+   - Periodic LoRa ranging can't position nodes on a near-straight line (~50 m across-line error),
+     but it does catch gross mistakes, moves along the line of ≥ 10–20 m, and impostors (doc 06).
+     The accelerometer covers moves across the line.
+8. **Health telemetry is nearly free:** 23 B on each 5-minute heartbeat, < 0.1% duty per node.
+9. **No MCU emulator models I²S audio input.** So simulate at the firmware HAL boundary: the node's
    processing core is built natively and fed simulated audio. Emulators and real boards are only
    for ISA, memory and timing checks.
 
@@ -59,12 +69,15 @@ picture lives at the gateway.
 
 **Node types.** Sizing and power figures are in
 [doc 04](docs/research/04-hardware-boundaries.md).
-- *Detector node (~$20–35, ~2 mA):* nRF52840 or nRF54L15 + SX1262 (dev board: RAK4631), with
-  1 PDM mic (e.g. T5838).
-  - No GNSS: position is surveyed at install, and time sync comes from gateway LoRa beacons.
+- *Detector node (~$20–35, ~2 mA):* nRF52840 or nRF54L15 + LoRa radio with ranging (LR2021 or
+  LR1121; an SX1262 board such as the RAK4631 is fine for early benches), 1 PDM mic (e.g. T5838),
+  and an accelerometer for tamper detection.
+  - No GNSS: position comes from acoustic provisioning at install, and time sync from gateway
+    LoRa beacons.
   - Scans BLE for Remote ID.
   - Runs for months on one 18650, or indefinitely on a 0.15–0.5 W panel.
-- *Array node (~$65–90, ~45–63 mA):* ESP32-S3 N16R8 + 4 PDM/TDM mics + SX1262 + GNSS with PPS.
+- *Array node (~$65–90, ~45–63 mA):* ESP32-S3 N16R8 + 4 PDM/TDM mics + LR2021 + GNSS with PPS.
+  Its GNSS position makes it a ranging anchor.
   - Aperture: 10–15 cm for FPV-class drones; 30–50 cm helps low-frequency drones.
   - Power: 2.5–3.5 W panel and 2× 18650.
   - Placement: every 2nd–3rd position, or every position on critical segments.
@@ -86,7 +99,13 @@ picture lives at the gateway.
 5. Only a detection with ≥ 2 nodes agreeing, or a sustained single-node track, raises a crossing alert.
 
 **Mesh and messages.**
-- *Idle:* a robust LoRa setting with a 5-minute heartbeat.
+- *Idle:* a robust LoRa setting (SF9/125 kHz) with a 5-minute heartbeat. Each heartbeat is a 23 B
+  health report: battery and solar, temperature, resets, mic noise floor and self-test, wind
+  level, detection counts, tilt and tamper flags, beacon link quality, clock offset, GNSS lock,
+  firmware hash. **Health reports stop during events.**
+- *Ranging:* round-trip time-of-flight to neighbours, scheduled by the gateway into TDMA slots:
+  once when a node joins, daily at the quietest hour, and on demand after a tamper, tilt or reset.
+  Never during events. ~0.1% of the detector node's energy.
 - *Event:* switch to a fast setting, with GPS-synced TDMA slots.
 - *Baseline messages:* detection + confidence, bearing, band level, 1–2 harmonic-line frequencies,
   class on change. A Doppler trend across nodes gives direction of travel.
@@ -96,6 +115,11 @@ picture lives at the gateway.
 **Gateway.**
 - Raspberry Pi with a LoRa radio.
 - Fuses nodes into crossing events and tracks.
+- Health monitoring:
+  - 3 missed heartbeats outside an event → segment-gap alert, and radar watches that sector.
+  - A live coverage map from each node's noise floor (+6 dB ambient ≈ half the detection radius).
+    Thin segments go to the radar as watch sectors.
+  - Battery forecasts, mic faults, tamper and ranging-integrity alerts.
 - Exposes an interface for the radar/C2 system: alerts out, cues in.
 - Logs everything for replay.
 
@@ -104,7 +128,7 @@ picture lives at the gateway.
 Each phase has an exit criterion. A failed criterion means re-plan, not push on.
 
 ### Phase 0: Groundwork. *Mostly done.*
-Repo, research docs 01–03, simulation experiments, and real drone recordings (DroneNoise Database).
+Repo, research docs 01–06, simulation experiments, and real drone recordings (DroneNoise Database).
 
 ### Phase 1: Simulator and detector baseline (3–4 weeks)
 - **Acoustic world, `sim/acoustics`.** Real and synthetic drone sources and flight paths.
@@ -122,6 +146,8 @@ Repo, research docs 01–03, simulation experiments, and real drone recordings (
   in CI, and on hardware.
 - Measure CPU, RAM and power on the board.
 - Remote ID scanner.
+- Health report and ranging on two LR2021 boards: RTToF error and day-to-day drift at ~350 m, in
+  the open and through trees; current per exchange.
 - **Exit:** the detector on the MCU matches its native build on recorded audio; ≤ 25% CPU;
   daily energy fits 2× 18650 plus a 2 W panel.
 
@@ -144,6 +170,8 @@ Repo, research docs 01–03, simulation experiments, and real drone recordings (
   - Alert latency ≤ 5 s.
   - False alarms ≤ 1/km/day.
   - 72 h unattended operation.
+  - Every node's health visible at the gateway; a powered-off or moved node is flagged within
+    15 min (moved: at the next sweep).
 
 ### Phase 5: Integration and hardening (ongoing)
 - Radar cueing both ways.
@@ -159,7 +187,8 @@ Repo, research docs 01–03, simulation experiments, and real drone recordings (
 | Wind noise limits range | Wind-screen R&D in Phase 3. Raise thresholds adaptively when the node's anemometer or self-noise rises. Lean on radar in high wind. |
 | False alarms from look-alike sounds | Require ≥ 2-node agreement. Hard-negative mining from field logs. Cross-check with radar. |
 | Quiet or large stabilised drones (least wobble, low tones) | Adaptive bands down to ~80 Hz. Treat them as the design worst case in simulation. |
-| Gaps in the line (node failure, terrain) | Spacing margin, heartbeat monitoring, optional second row. |
+| Gaps in the line (node failure, terrain, noise) | Spacing margin, health heartbeat, live coverage map that cues radar to thin segments, optional second row. |
+| Node moved, swapped or impersonated | Accelerometer tamper flag, periodic ranging integrity check, authenticated messages. |
 | LoRa congestion during events | TDMA, aggregate messages per track, optional burst layer only on request. |
 | Regulatory | Receive-only RF. LoRa within regional duty and dwell rules. Legal test flights. No raw audio stored or sent outside R&D. |
 
@@ -176,6 +205,7 @@ Repo, research docs 01–03, simulation experiments, and real drone recordings (
 - [ ] Phase 1: a detector baseline with an adaptive harmonic band, scored for detection and false alarms on real audio.
 - [ ] Order a bench kit:
   - 2× RAK4631 + 2× PDM mic breakouts (detector node)
+  - 2× LR2021 evaluation kit (XIAO nRF54L15), for ranging and the ranging-capable detector node
   - 2× ESP32-S3 N16R8 + 8× PDM/TDM mics (array node)
   - 1× LilyGO T-Beam Supreme
   - 1× Raspberry Pi Zero 2 W + GNSS module, for synced field recording
