@@ -21,6 +21,18 @@ const FATE_CSS: Record<string, string> = {
 };
 const PACKET_SECONDS = 1;
 
+// Marker sizes: every object is drawn 3x and always has a ring; the selected one is 10x.
+const ICON_SCALE = 3;
+const SELECTED_SCALE = 10;
+const RING_SELECTED = 0xffe066;
+const RING_COLOR = { detector: 0x4aa3ff, array: 0xff9f43, gateway: 0x3ddc84, drone: 0xff4d6d } as const;
+
+function isSelected(selection: Selection, kind: 'node' | 'drone' | 'gateway', id = 0): boolean {
+  if (!selection) return false;
+  if (kind === 'gateway') return selection.kind === 'gateway' || selection.kind === 'radar';
+  return selection.kind === kind && selection.id === id;
+}
+
 function packetColor(fate: string): number {
   return FATE_COLOR[fate] ?? 0x8a98a8;
 }
@@ -260,7 +272,8 @@ export class WorldView {
   private readonly radar = buildRadar();
   private map: HTMLCanvasElement | null = null;
   private mapCtx: CanvasRenderingContext2D | null = null;
-  private readonly ring: THREE.Mesh;
+  private readonly ringGroup = new THREE.Group();
+  private readonly rings = new Map<string, THREE.Mesh>();
   private readonly nodeMeshes = new Map<number, { kind: NodeKind; obj: THREE.Group }>();
   private readonly droneMeshes = new Map<number, { cls: DroneClass; obj: THREE.Group; tether: THREE.Line }>();
   private terrain: Terrain | null = null;
@@ -279,13 +292,7 @@ export class WorldView {
     sun.position.set(-1500, 2500, 1000);
     this.scene.add(new THREE.HemisphereLight(0xffffff, 0x4d6035, 1.8), sun);
     this.scene.add(this.staticGroup, this.nodeGroup, this.droneGroup, this.packetGroup, this.gateway, this.radar);
-    this.ring = new THREE.Mesh(
-      new THREE.RingGeometry(10, 13, 40),
-      new THREE.MeshBasicMaterial({ color: 0xffe066, side: THREE.DoubleSide, transparent: true, opacity: 0.9 }),
-    );
-    this.ring.rotation.x = -Math.PI / 2;
-    this.ring.visible = false;
-    this.scene.add(this.ring);
+    this.scene.add(this.ringGroup);
     if (!renderer || !controls) {
       const note = document.createElement('div');
       note.className = 'no-webgl';
@@ -362,7 +369,7 @@ export class WorldView {
   // Makes three.js objects match world state. Rendering only reads state.
   sync(world: World, state: WorldState, selection: Selection, lora: LoraView | null = null, nowS = 0): void {
     if (!this.renderer) {
-      this.draw2d(world, state, lora, nowS);
+      this.draw2d(world, state, selection, lora, nowS);
       return;
     }
     const terrain = world.terrain;
@@ -377,6 +384,7 @@ export class WorldView {
         this.nodeMeshes.set(n.id, e);
       }
       e.obj.position.copy(toScene(n.x, n.y, terrain.height(n.x, n.y)));
+      e.obj.scale.setScalar(isSelected(selection, 'node', n.id) ? SELECTED_SCALE : ICON_SCALE);
     }
     for (const [id, e] of this.nodeMeshes) {
       if (!seenNodes.has(id)) {
@@ -397,8 +405,11 @@ export class WorldView {
         this.droneMeshes.set(d.id, e);
       }
       e.obj.position.copy(toScene(d.x, d.y, d.alt));
+      const droneScale = isSelected(selection, 'drone', d.id) ? SELECTED_SCALE : ICON_SCALE;
+      e.obj.scale.setScalar(droneScale);
       const pos = e.tether.geometry.getAttribute('position') as THREE.BufferAttribute;
-      pos.setY(1, -(d.alt - terrain.height(d.x, d.y)));
+      // the tether is a child of the scaled group, so undo the scale to keep it reaching the ground
+      pos.setY(1, -(d.alt - terrain.height(d.x, d.y)) / droneScale);
       pos.needsUpdate = true;
     }
     for (const [id, e] of this.droneMeshes) {
@@ -409,27 +420,44 @@ export class WorldView {
     }
 
     this.gateway.position.copy(toScene(state.gateway.x, state.gateway.y, terrain.height(state.gateway.x, state.gateway.y)));
+    this.gateway.scale.setScalar(isSelected(selection, 'gateway') ? SELECTED_SCALE : ICON_SCALE);
     this.radar.position.copy(this.gateway.position);
 
-    this.updateRing(world, state, selection);
+    this.updateRings(world, state, selection);
     this.updatePackets(world, state, lora, nowS);
   }
 
-  private updateRing(world: World, state: WorldState, selection: Selection): void {
-    let x: number | null = null;
-    let y: number | null = null;
-    if (selection?.kind === 'node') {
-      const n = state.nodes.find((o) => o.id === selection.id);
-      if (n) [x, y] = [n.x, n.y];
-    } else if (selection?.kind === 'drone') {
-      const d = state.drones.find((o) => o.id === selection.id);
-      if (d) [x, y] = [d.x, d.y];
-    } else if (selection?.kind === 'gateway' || selection?.kind === 'radar') {
-      [x, y] = [state.gateway.x, state.gateway.y];
-    }
-    this.ring.visible = x !== null && y !== null;
-    if (x !== null && y !== null) {
-      this.ring.position.copy(toScene(x, y, world.terrain.height(x, y) + 0.5));
+  // One ground ring per object, always shown; the selected object's ring is larger and yellow.
+  private updateRings(world: World, state: WorldState, selection: Selection): void {
+    const seen = new Set<string>();
+    const place = (key: string, x: number, y: number, color: number, selected: boolean): void => {
+      seen.add(key);
+      let ring = this.rings.get(key);
+      if (!ring) {
+        ring = new THREE.Mesh(
+          new THREE.RingGeometry(10, 13, 40),
+          new THREE.MeshBasicMaterial({ side: THREE.DoubleSide, transparent: true }),
+        );
+        ring.rotation.x = -Math.PI / 2;
+        ring.raycast = () => {};
+        this.ringGroup.add(ring);
+        this.rings.set(key, ring);
+      }
+      const mat = ring.material as THREE.MeshBasicMaterial;
+      mat.color.setHex(selected ? RING_SELECTED : color);
+      mat.opacity = selected ? 0.9 : 0.6;
+      ring.scale.setScalar(selected ? SELECTED_SCALE : ICON_SCALE);
+      ring.position.copy(toScene(x, y, world.terrain.height(x, y) + 0.5));
+    };
+    for (const n of state.nodes) place(`n${n.id}`, n.x, n.y, RING_COLOR[n.kind], isSelected(selection, 'node', n.id));
+    for (const d of state.drones) place(`d${d.id}`, d.x, d.y, RING_COLOR.drone, isSelected(selection, 'drone', d.id));
+    place('gw', state.gateway.x, state.gateway.y, RING_COLOR.gateway, isSelected(selection, 'gateway'));
+    for (const [key, ring] of this.rings) {
+      if (seen.has(key)) continue;
+      this.ringGroup.remove(ring);
+      ring.geometry.dispose();
+      (ring.material as THREE.Material).dispose();
+      this.rings.delete(key);
     }
   }
 
@@ -488,7 +516,7 @@ export class WorldView {
 
   private lastMap = { w: 1, h: 1 };
 
-  private draw2d(world: World, state: WorldState, lora: LoraView | null, nowS: number): void {
+  private draw2d(world: World, state: WorldState, selection: Selection, lora: LoraView | null, nowS: number): void {
     const canvas = this.map;
     const ctx = this.mapCtx;
     if (!canvas || !ctx) return;
@@ -530,30 +558,45 @@ export class WorldView {
       ctx.globalAlpha = 1;
     }
 
+    // Every marker is ICON_SCALE x its old size with a ring around it; the selected one is SELECTED_SCALE x.
+    const ring = (x: number, y: number, r: number, color: string, selected: boolean): void => {
+      ctx.strokeStyle = selected ? '#ffe066' : color;
+      ctx.globalAlpha = selected ? 0.95 : 0.6;
+      ctx.lineWidth = selected ? 3 : 2;
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    };
     for (const n of state.nodes) {
       const view = lora?.nodes.find((v) => v.id === n.id);
-      ctx.fillStyle = n.kind === 'array' ? '#ff9f43' : '#4aa3ff';
+      const k = isSelected(selection, 'node', n.id) ? SELECTED_SCALE : ICON_SCALE;
+      const color = n.kind === 'array' ? '#ff9f43' : '#4aa3ff';
+      const [x, y] = [sx(n.x), sy(n.y)];
+      ctx.fillStyle = color;
       ctx.beginPath();
-      ctx.arc(sx(n.x), sy(n.y), view?.detecting ? 7 : 5, 0, Math.PI * 2);
+      ctx.arc(x, y, (view?.detecting ? 7 : 5) * k, 0, Math.PI * 2);
       ctx.fill();
-      if (view?.detecting) {
-        ctx.strokeStyle = '#ff4d6d';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.arc(sx(n.x), sy(n.y), 10, 0, Math.PI * 2);
-        ctx.stroke();
-      }
+      ring(x, y, 10 * k, view?.detecting ? '#ff4d6d' : color, k === SELECTED_SCALE);
     }
-    ctx.fillStyle = '#3ddc84';
-    ctx.fillRect(sx(state.gateway.x) - 6, sy(state.gateway.y) - 6, 12, 12);
+    {
+      const k = isSelected(selection, 'gateway') ? SELECTED_SCALE : ICON_SCALE;
+      const [x, y] = [sx(state.gateway.x), sy(state.gateway.y)];
+      ctx.fillStyle = '#3ddc84';
+      ctx.fillRect(x - 6 * k, y - 6 * k, 12 * k, 12 * k);
+      ring(x, y, 11 * k, '#3ddc84', k === SELECTED_SCALE);
+    }
     for (const d of state.drones) {
+      const k = isSelected(selection, 'drone', d.id) ? SELECTED_SCALE : ICON_SCALE;
+      const [x, y] = [sx(d.x), sy(d.y)];
       ctx.fillStyle = '#ff4d6d';
       ctx.beginPath();
-      ctx.moveTo(sx(d.x), sy(d.y) - 7);
-      ctx.lineTo(sx(d.x) - 5, sy(d.y) + 5);
-      ctx.lineTo(sx(d.x) + 5, sy(d.y) + 5);
+      ctx.moveTo(x, y - 7 * k);
+      ctx.lineTo(x - 5 * k, y + 5 * k);
+      ctx.lineTo(x + 5 * k, y + 5 * k);
       ctx.closePath();
       ctx.fill();
+      ring(x, y, 10 * k, '#ff4d6d', k === SELECTED_SCALE);
     }
     ctx.fillStyle = '#dfe6ee';
     ctx.font = '12px system-ui, sans-serif';
