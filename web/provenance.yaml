@@ -271,10 +271,10 @@ components:
     name: Node detection stub
     tag: STUB
     milestone: M3
-    summary: "What a node reports before the M2 detector core exists: a band-level threshold (default 6 dB for 0.5 s), bearing for array nodes, confidence, class and line frequencies from truth with noise, plus 1-bit snippet audio."
+    summary: "What a node reports before the M2 detector core exists: a band-level threshold (2 dB over the ambient for 0.5 s, released under 1 dB for 0.5 s), bearing for array nodes, confidence, class and line frequencies from truth with noise, plus 1-bit snippet audio."
     evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/docs/web-demo-plan.md"
     upgrade: "STUB to SAME CODE in M2: the firmware detector core, built to WASM."
-    bias: "Demo nodes sit 120 m apart because the stub hears a drone at 30 m out to about 70-100 m, leaving no gap between nodes; the 350 m design and the real detector in sim/perimeter are separate. Detection fields follow truth, not a detector. Bearings are truth plus N(0, 5 degrees). The blue line from a detecting node goes to the nearest true drone, so it cannot show a wrong match. The UI marks the stub in big letters."
+    bias: "Demo nodes sit 120 m apart because the stub then hears each drone class up to 100 m altitude across the gap between nodes (measured range at 30 m: 165-224 m). The demo background has no wind or sound events, so this threshold would false alarm on a real site; the 350 m design and the real detector in sim/perimeter are separate. Detection fields follow truth, not a detector. Bearings are truth plus N(0, 5 degrees). The blue line from a detecting node goes to the nearest true drone, so it cannot show a wrong match. The UI marks the stub in big letters."
 
   - id: ranging
     name: Ranging error

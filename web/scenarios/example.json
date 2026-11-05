@@ -4,7 +4,7 @@
   "name": "Line of 13 nodes, FPV crossing at 20 m/s",
   "seed": 20261104,
   "terrain": {
-    "size_m": [2000, 800],
+    "size_m": [2000, 1400],
     "amplitude_m": 7,
     "wavelength_m": 300,
     "road_y_m": 30
@@ -31,8 +31,8 @@
       "class": "fpv",
       "path": {
         "kind": "crossing",
-        "from": { "x": -150, "y": 100 },
-        "to": { "x": 450, "y": -300 },
+        "from": { "x": -450, "y": 300 },
+        "to": { "x": 750, "y": -500 },
         "speed_mps": 20,
         "altitude_m": 30
       }

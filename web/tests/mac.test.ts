@@ -114,7 +114,9 @@ describe('LoRa MAC and schedule', () => {
     let ambient = 0;
     const droneId = runner.world.state.drones[0].id;
     let linked = 0;
-    // the drone passes node 7 at about 9 s; run to 90 s, past the end of the event
+    // The packet log keeps only the newest packets, so collect types during the run.
+    const types = new Set<string>();
+    // the drone passes node 7 at about 27 s; run to 90 s, past the end of the event
     for (let i = 0; i < 9000; i++) {
       runner.stepTick();
       engine.tick(runner.world);
@@ -122,15 +124,15 @@ describe('LoRa MAC and schedule', () => {
       maxBand = Math.max(maxBand, engine.bandLevel('7.0'));
       ambient = engine.ambientDb();
       if (i % 50 === 0) {
-        for (const n of runner.lora.snapshot().nodes) {
+        const snap = runner.lora.snapshot();
+        for (const p of snap.packets) types.add(p.type);
+        for (const n of snap.nodes) {
           expect(n.targetId).toBe(n.detecting ? droneId : null);
           if (n.detecting) linked++;
         }
       }
     }
     expect(linked, 'a node was linked to the drone').toBeGreaterThan(0);
-    const view = runner.lora.snapshot();
-    const types = new Set(view.packets.map((p) => p.type));
     for (const type of ['BEACON', 'RANGING_RESULT', 'DETECT_START', 'DETECT', 'SNIPPET']) {
       expect(types.has(type), `example run sent ${type}`).toBe(true);
     }

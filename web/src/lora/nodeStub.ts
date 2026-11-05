@@ -5,7 +5,10 @@ import type { DroneClass } from '../sim/scenario';
 import { gauss } from '../acoustics/dsp';
 import { HEALTH_FIELDS } from '../protocol/messages';
 
-export const DETECTION_THRESHOLD_DB = 6;
+// Above the demo background, whose 100 ms band level peaked 1.4 dB over the ambient in 600 s across 13 nodes. That
+// background is steady noise only: no wind or sound events, so a real site would need a higher threshold.
+export const DETECTION_THRESHOLD_DB = 2;
+export const DETECTION_RELEASE_DB = 1;
 export const DETECTION_HOLD_S = 0.5;
 export const RANGE_SIGMA_M = 4;
 export const NLOS_P = 0.25;
@@ -124,6 +127,7 @@ export class NodeStub {
   readonly energy = new EnergyModel();
   private readonly rng: Rng;
   private aboveSince = -1;
+  private belowSince = -1;
   private latched = false;
   detecting = false;
   detections = 0;
@@ -147,10 +151,23 @@ export class NodeStub {
     this.energy.step(0.01);
     this.lastBandDb = obs.bandDb;
     this.minBandDb = Math.min(this.minBandDb, obs.bandDb);
-    const trigger = obs.bandDb >= obs.ambientDb + DETECTION_THRESHOLD_DB;
-    if (trigger) {
+    const margin = obs.bandDb - obs.ambientDb;
+    if (this.latched) {
+      // A detection ends only after the level stays low, so a level near the threshold does not flicker.
+      if (margin >= DETECTION_RELEASE_DB) {
+        this.belowSince = -1;
+      } else {
+        if (this.belowSince < 0) this.belowSince = t;
+        if (t - this.belowSince >= DETECTION_HOLD_S) {
+          this.belowSince = -1;
+          this.aboveSince = -1;
+          this.latched = false;
+          this.detecting = false;
+        }
+      }
+    } else if (margin >= DETECTION_THRESHOLD_DB) {
       if (this.aboveSince < 0) this.aboveSince = t;
-      if (!this.latched && t - this.aboveSince >= DETECTION_HOLD_S) {
+      if (t - this.aboveSince >= DETECTION_HOLD_S) {
         this.latched = true;
         this.detecting = true;
         this.detections++;
@@ -158,8 +175,6 @@ export class NodeStub {
       }
     } else {
       this.aboveSince = -1;
-      this.latched = false;
-      this.detecting = false;
     }
     return this.detecting && this.lastDetectionS === t ? null : null;
   }
@@ -270,6 +285,6 @@ export class NodeStub {
   }
 
   stateHash(): string {
-    return `${this.id}:${this.aboveSince}:${this.latched ? 1 : 0}:${this.detecting ? 1 : 0}:${this.detections}:${this.rejected}:${this.retries}:${this.queue}:${this.energy.batteryV.toFixed(6)}:${this.energy.clockOffsetUs.toFixed(6)}:${this.rng.state}`;
+    return `${this.id}:${this.aboveSince}:${this.belowSince}:${this.latched ? 1 : 0}:${this.detecting ? 1 : 0}:${this.detections}:${this.rejected}:${this.retries}:${this.queue}:${this.energy.batteryV.toFixed(6)}:${this.energy.clockOffsetUs.toFixed(6)}:${this.rng.state}`;
   }
 }
