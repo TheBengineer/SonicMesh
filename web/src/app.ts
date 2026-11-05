@@ -190,6 +190,7 @@ export function startApp(root: HTMLElement): void {
   let selection: Selection = null;
   let mode: Mode = 'select';
   let viewMode: ViewMode = 'orbit';
+  let viewPicked = false;
   let drag: { target: Target; lastX: number; lastY: number } | null = null;
   let press: { x: number; y: number; hit: Hit | null } | null = null;
   let message = '';
@@ -219,11 +220,18 @@ export function startApp(root: HTMLElement): void {
     if (viewMode === 'follow' && s?.kind === 'drone') view.setView('follow', s.id);
   }
 
-  function setViewMode(v: ViewMode): void {
+  function setViewMode(v: ViewMode, smooth = false): void {
     viewMode = v;
     const followId = selection?.kind === 'drone' ? selection.id : (frameNow().state.drones[0]?.id ?? null);
-    view.setView(v, followId);
+    view.setView(v, followId, smooth);
     markPressed(root, '[data-view]', 'view', v);
+  }
+
+  // Play flies to the drone, unless the user has picked a view themselves.
+  function togglePlay(): void {
+    const playing = !frameNow().playing;
+    if (playing && !viewPicked && viewMode !== 'follow' && frameNow().state.drones.length > 0) setViewMode('follow', true);
+    host.play(playing);
   }
 
   function setMode(m: Mode): void {
@@ -240,6 +248,8 @@ export function startApp(root: HTMLElement): void {
     listener.stop();
     listenKey = null;
     view.setWorld(worldNow());
+    viewPicked = false;
+    setViewMode('orbit');
     select(null);
   }
 
@@ -406,7 +416,7 @@ export function startApp(root: HTMLElement): void {
 
   const inspector = new Inspector(inspectorEl, onAction);
   const timeline = new Timeline(need<HTMLElement>(root, '#timeline'), {
-    togglePlay: () => host.play(!frameNow().playing),
+    togglePlay,
     step: () => host.step(),
     reset: () => {
       reload(scenario);
@@ -514,7 +524,7 @@ export function startApp(root: HTMLElement): void {
     if (e.repeat) return;
     switch (e.code) {
       case 'KeyP':
-        host.play(!frameNow().playing);
+        togglePlay();
         break;
       case 'Period':
         host.step();
@@ -523,6 +533,7 @@ export function startApp(root: HTMLElement): void {
         replay();
         break;
       case 'KeyF':
+        viewPicked = true;
         setViewMode('follow');
         break;
       case 'KeyT':
@@ -541,7 +552,10 @@ export function startApp(root: HTMLElement): void {
   window.addEventListener('blur', () => keysDown.clear());
 
   root.querySelectorAll<HTMLButtonElement>('[data-view]').forEach((b) =>
-    b.addEventListener('click', () => setViewMode(b.dataset.view as ViewMode)),
+    b.addEventListener('click', () => {
+      viewPicked = true;
+      setViewMode(b.dataset.view as ViewMode);
+    }),
   );
   root.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach((b) =>
     b.addEventListener('click', () => setMode(b.dataset.mode as Mode)),

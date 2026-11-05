@@ -50,7 +50,7 @@ taken where v0 leaves a layout or policy open:
 
 - Drone: WASD or arrows move, Q/E down/up, gamepad sticks. M toggles manual and GPS-hover flight.
 - World: click to select, drag nodes and the gateway on the ground. Use the + Node and + Drone buttons, then click the ground.
-- Time: P play/pause, `.` step one 10 ms tick, R replay, T truth overlay, F follow the drone, Del removes the selection.
+- Time: P play/pause (play flies the camera to the drone unless you picked a view), `.` step one 10 ms tick, R replay, T truth overlay, F follow the drone, Del removes the selection.
 - Runs: every edit is logged with its tick. Save run downloads `sonicmesh-scenario.json` and `sonicmesh-inputs.json`. Load scenario, then Load inputs, then play to replay.
 
 ## Layout

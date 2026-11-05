@@ -42,6 +42,9 @@ function fateCss(fate: string): string {
 }
 
 export type ViewMode = 'orbit' | 'follow' | 'top';
+
+const FOLLOW_OFFSET = new THREE.Vector3(0, 120, 300);
+const FLIGHT_MS = 1500;
 export type Target = { kind: 'node' | 'drone'; id: number } | { kind: 'gateway' } | { kind: 'terrain' };
 export interface Hit {
   target: Target;
@@ -280,6 +283,7 @@ export class WorldView {
   private terrainMesh: THREE.Mesh | null = null;
   private view: ViewMode = 'orbit';
   private followId: number | null = null;
+  private flight: { startMs: number; fromPos: THREE.Vector3; fromTarget: THREE.Vector3 } | null = null;
 
   constructor(private readonly container: HTMLElement) {
     const renderer = createRenderer();
@@ -309,6 +313,7 @@ export class WorldView {
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     container.appendChild(renderer.domElement);
     controls.enableDamping = true;
+    controls.addEventListener('start', () => (this.flight = null)); // the user took the camera
     const resizeObserver = new ResizeObserver(() => this.resize());
     resizeObserver.observe(container);
     this.resize();
@@ -329,20 +334,28 @@ export class WorldView {
     this.setView('orbit', null);
   }
 
-  setView(view: ViewMode, followId: number | null): void {
+  // smooth flies the camera to a followed drone instead of cutting to it.
+  setView(view: ViewMode, followId: number | null, smooth = false): void {
     const controls = this.controls;
     if (!controls) return;
     this.view = view;
     this.followId = followId;
+    this.flight = null;
     controls.enableRotate = view !== 'top';
     if (view === 'top') {
       controls.target.set(0, 0, 0);
       this.camera.position.set(0, 4200, 1);
     } else if (view === 'follow') {
       const m = followId === null ? undefined : this.droneMeshes.get(followId);
-      if (m) {
+      if (m && smooth) {
+        this.flight = {
+          startMs: performance.now(),
+          fromPos: this.camera.position.clone(),
+          fromTarget: controls.target.clone(),
+        };
+      } else if (m) {
         controls.target.copy(m.obj.position);
-        this.camera.position.copy(m.obj.position).add(new THREE.Vector3(0, 120, 300));
+        this.camera.position.copy(m.obj.position).add(FOLLOW_OFFSET);
       }
     } else {
       controls.target.set(0, 0, 0);
@@ -356,7 +369,14 @@ export class WorldView {
     if (!renderer || !controls) return;
     if (this.view === 'follow' && this.followId !== null) {
       const m = this.droneMeshes.get(this.followId);
-      if (m) {
+      if (m && this.flight) {
+        // Aim at the moving drone throughout, so the flight ends exactly where following begins.
+        const u = Math.min(1, (performance.now() - this.flight.startMs) / FLIGHT_MS);
+        const ease = u * u * (3 - 2 * u);
+        controls.target.lerpVectors(this.flight.fromTarget, m.obj.position, ease);
+        this.camera.position.lerpVectors(this.flight.fromPos, m.obj.position.clone().add(FOLLOW_OFFSET), ease);
+        if (u >= 1) this.flight = null;
+      } else if (m) {
         const delta = m.obj.position.clone().sub(controls.target);
         controls.target.add(delta);
         this.camera.position.add(delta);
