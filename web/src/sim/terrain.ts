@@ -84,7 +84,8 @@ export class Terrain {
 export function placeTrees(t: Terrain): Tree[] {
   const rng = createRng(t.seed ^ 0x9e3779b9);
   const trees: Tree[] = [];
-  for (let c = 0; c < 70; c++) {
+  const clusters = Math.round((70 * (t.halfX * t.halfY)) / (2500 * 1000)); // the same tree density on any terrain
+  for (let c = 0; c < clusters; c++) {
     const cx = range(rng, -t.halfX + 100, t.halfX - 100);
     const cy = range(rng, -t.halfY + 100, t.halfY - 100);
     const count = 4 + Math.floor(range(rng, 0, 12));

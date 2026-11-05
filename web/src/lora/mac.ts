@@ -25,7 +25,7 @@ import {
   type Vec3,
   type Wave,
 } from './channel';
-import { NodeStub, measureRange, type Detection, type HealthValue, type NodeObservation, type TruthTarget } from './nodeStub';
+import { NodeStub, RANGING_MAX_LINK_M, measureRange, type Detection, type HealthValue, type NodeObservation, type TruthTarget } from './nodeStub';
 import type { GatewayView, GridSlot, HealthView, LoraView, MessageView, NodeView, PacketView, RangingView, RxView } from './types';
 
 export const IDLE_SUPERFRAME_S = 4;
@@ -594,7 +594,7 @@ export class LoRaNetwork {
         const a = this.nodes[i];
         const b = this.nodes[j];
         const d = Math.hypot(a.spec.x - b.spec.x, a.spec.y - b.spec.y);
-        if (d <= 2.2 * 350) links.push({ a: a.spec.id, b: b.spec.id, d });
+        if (d <= RANGING_MAX_LINK_M) links.push({ a: a.spec.id, b: b.spec.id, d });
       }
     }
     links.sort((x, y) => x.a - y.a || x.b - y.b);

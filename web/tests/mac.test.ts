@@ -114,7 +114,7 @@ describe('LoRa MAC and schedule', () => {
     let ambient = 0;
     const droneId = runner.world.state.drones[0].id;
     let linked = 0;
-    // the drone passes node 7 at about 54 s; run to 90 s, past the end of the event
+    // the drone passes node 7 at about 9 s; run to 90 s, past the end of the event
     for (let i = 0; i < 9000; i++) {
       runner.stepTick();
       engine.tick(runner.world);
@@ -164,12 +164,12 @@ describe('LoRa MAC and schedule', () => {
 
   it('moving a node 20 m along the line changes the next reported range by about 20 m', () => {
     const base: NodeSpec[] = [
-      { id: 1, kind: 'detector', x: -200, y: 0 },
-      { id: 2, kind: 'detector', x: 200, y: 0 },
+      { id: 1, kind: 'detector', x: -100, y: 0 },
+      { id: 2, kind: 'detector', x: 100, y: 0 },
     ];
     const moved: NodeSpec[] = [
-      { id: 1, kind: 'detector', x: -180, y: 0 },
-      { id: 2, kind: 'detector', x: 200, y: 0 },
+      { id: 1, kind: 'detector', x: -80, y: 0 },
+      { id: 2, kind: 'detector', x: 100, y: 0 },
     ];
     const a = network(base, 12345);
     const b = network(moved, 12345);
@@ -180,8 +180,8 @@ describe('LoRa MAC and schedule', () => {
     const rb = b.snapshot().nodes.find((n) => n.id === 1)?.ranging.at(-1);
     expect(ra, 'range from the stationary layout').toBeDefined();
     expect(rb, 'range from the moved layout').toBeDefined();
-    expect(ra!.trueM).toBeCloseTo(400, 6);
-    expect(rb!.trueM).toBeCloseTo(380, 6);
+    expect(ra!.trueM).toBeCloseTo(200, 6);
+    expect(rb!.trueM).toBeCloseTo(180, 6);
     expect(Math.abs(ra!.measuredM - rb!.measuredM - 20)).toBeLessThan(1e-6);
   });
 

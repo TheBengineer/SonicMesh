@@ -32,6 +32,16 @@ export function gamepadStick(): Stick {
   return { x: axis(0), y: -axis(3), z: -axis(1) };
 }
 
+// Turns a stick from the pilot's view into sim axes: up flies along heading, the unit ground direction the camera
+// faces (x east, y north), and right flies to its right. Up and down stay as they are.
+export function cameraStick(s: Stick, heading: { x: number; y: number }): Stick {
+  return {
+    x: clamp(s.x * heading.y + s.y * heading.x, -1, 1),
+    y: clamp(s.y * heading.y - s.x * heading.x, -1, 1),
+    z: s.z,
+  };
+}
+
 export function combineSticks(a: Stick, b: Stick): Stick {
   return { x: clamp(a.x + b.x, -1, 1), y: clamp(a.y + b.y, -1, 1), z: clamp(a.z + b.z, -1, 1) };
 }

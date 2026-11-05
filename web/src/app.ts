@@ -2,7 +2,7 @@ import exampleScenario from '../scenarios/example.json';
 import { SELF_NOISE_DB } from './acoustics/model';
 import { MicAnalysis } from './audio/analysis';
 import { Listener } from './audio/listen';
-import { combineSticks, gamepadStick, keyboardStick, quantizeStick, sameStick, zeroStick } from './input/sticks';
+import { cameraStick, combineSticks, gamepadStick, keyboardStick, quantizeStick, sameStick, zeroStick } from './input/sticks';
 import { COMPONENT } from './provenance/components';
 import { loadLedger, type Ledger } from './provenance/ledger';
 import type { Selection } from './selection';
@@ -299,10 +299,11 @@ export function startApp(root: HTMLElement): void {
     select(null);
   }
 
-  // Keyboard and gamepad sticks go to the selected drone. Only changes are logged, so an idle controller does not
-  // touch the run.
+  // Keyboard and gamepad sticks go to the selected drone, turned to the camera's heading. The log holds the turned
+  // stick, so a replay flies the same path whatever the camera does. Only changes are logged, so an idle controller
+  // does not touch the run.
   function pollSticks(): void {
-    const polled = quantizeStick(combineSticks(keyboardStick(keysDown), gamepadStick()));
+    const polled = quantizeStick(cameraStick(combineSticks(keyboardStick(keysDown), gamepadStick()), view.cameraHeading()));
     const id = selection?.kind === 'drone' ? selection.id : null;
     if (sameStick(polled, lastPolled) && id === lastTarget) return;
     lastPolled = polled;

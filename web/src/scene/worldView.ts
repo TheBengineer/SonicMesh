@@ -1,5 +1,8 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { Line2 } from 'three/examples/jsm/lines/Line2.js';
+import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry.js';
+import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import type { LoraView } from '../lora/types';
 import type { Selection } from '../selection';
 import type { NodeKind } from '../sim/scenario';
@@ -28,6 +31,7 @@ const SELECTED_SCALE = 10;
 const RING_SELECTED = 0xffe066;
 const RING_COLOR = { detector: 0x4aa3ff, array: 0xff9f43, gateway: 0x3ddc84, drone: 0xff4d6d } as const;
 const DETECT_LINE = 0x5fb4ff; // --accent in style.css
+const DETECT_LINE_PX = 5;
 
 function isSelected(selection: Selection, kind: 'node' | 'drone' | 'gateway', id = 0): boolean {
   if (!selection) return false;
@@ -45,7 +49,11 @@ function fateCss(fate: string): string {
 
 export type ViewMode = 'orbit' | 'follow' | 'top';
 
-const FOLLOW_OFFSET = new THREE.Vector3(0, 120, 300);
+const FOLLOW_OFFSET = new THREE.Vector3(0, 60, 150);
+// Camera start points for a terrain REF_TERRAIN_M wide; other sizes scale from these.
+const REF_TERRAIN_M = 2000;
+const TOP_HEIGHT_M = 1700;
+const ORBIT_START = new THREE.Vector3(-560, 440, 760);
 const FLIGHT_MS = 1500;
 export type Target = { kind: 'node' | 'drone'; id: number } | { kind: 'gateway' } | { kind: 'terrain' };
 export interface Hit {
@@ -333,9 +341,10 @@ export class WorldView {
     this.followId = followId;
     this.flight = null;
     controls.enableRotate = view !== 'top';
+    const scale = (this.terrain?.size[0] ?? REF_TERRAIN_M) / REF_TERRAIN_M;
     if (view === 'top') {
       controls.target.set(0, 0, 0);
-      this.camera.position.set(0, 4200, 1);
+      this.camera.position.set(0, TOP_HEIGHT_M * scale, 1);
     } else if (view === 'follow') {
       const m = followId === null ? undefined : this.droneMeshes.get(followId);
       if (m && smooth) {
@@ -350,8 +359,16 @@ export class WorldView {
       }
     } else {
       controls.target.set(0, 0, 0);
-      this.camera.position.set(-1400, 1100, 1900);
+      this.camera.position.copy(ORBIT_START).multiplyScalar(scale);
     }
+  }
+
+  // The ground direction the camera faces, as a unit vector (x east, y north). The 2D map is north up.
+  cameraHeading(): { x: number; y: number } {
+    if (!this.renderer) return { x: 0, y: 1 };
+    const dir = this.camera.getWorldDirection(new THREE.Vector3());
+    const len = Math.hypot(dir.x, dir.z);
+    return len < 1e-6 ? { x: 0, y: 1 } : { x: dir.x / len, y: -dir.z / len };
   }
 
   // Moves the scene camera with the followed drone. Called every frame.
@@ -447,11 +464,11 @@ export class WorldView {
     for (const v of lora.nodes) {
       const d = state.drones.find((o) => o.id === v.targetId);
       if (!d) continue;
-      const geo = new THREE.BufferGeometry().setFromPoints([
-        this.packetPos(v.id, state, world.terrain),
-        toScene(d.x, d.y, d.alt),
-      ]);
-      this.detectGroup.add(new THREE.Line(geo, new THREE.LineBasicMaterial({ color: DETECT_LINE })));
+      const a = this.packetPos(v.id, state, world.terrain);
+      const b = toScene(d.x, d.y, d.alt);
+      const geo = new LineGeometry().setPositions([a.x, a.y, a.z, b.x, b.y, b.z]);
+      // A plain WebGL line is always 1 pixel wide. Line2 keeps this width at any distance.
+      this.detectGroup.add(new Line2(geo, new LineMaterial({ color: DETECT_LINE, linewidth: DETECT_LINE_PX })));
     }
   }
 
@@ -598,7 +615,7 @@ export class WorldView {
       ctx.globalAlpha = 1;
 
       ctx.strokeStyle = `#${DETECT_LINE.toString(16)}`;
-      ctx.lineWidth = 2;
+      ctx.lineWidth = DETECT_LINE_PX;
       for (const v of lora.nodes) {
         const n = state.nodes.find((o) => o.id === v.id);
         const d = state.drones.find((o) => o.id === v.targetId);

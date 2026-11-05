@@ -10,7 +10,7 @@ export const DETECTION_HOLD_S = 0.5;
 export const RANGE_SIGMA_M = 4;
 export const NLOS_P = 0.25;
 export const NLOS_MAX_M = 12;
-export const RANGING_SPACING_M = 350;
+export const RANGING_SPACING_M = 120;
 export const RANGING_MAX_LINK_M = 2.2 * RANGING_SPACING_M;
 
 export interface NodeObservation {
