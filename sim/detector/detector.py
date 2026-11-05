@@ -10,9 +10,9 @@ Input: pressure in Pa at 16 kS/s. Frame: 1024 samples (64 ms), Hann window, hop 
      at most 16), the log ratio of the mean of W over a window of +-3 % around the harmonic (at least +-1 bin) to
      the mean over flanking bins of the same width, clipped at 0. Flanks remove a smooth slope, such as wind.
   5. Track: a candidate is acquired at the best score above the threshold and followed for as long as its score
-     stays above the threshold within 3 % per frame. Persistence counts up on a hit and down on a miss. A candidate
-     with a sub-harmonic at least SUB_RATIO times as strong takes over (octave errors). On after K_ON persistence,
-     off after HOLD frames with no hit.
+     stays above hold_ratio x threshold within 3 % per frame (hold_ratio 1.0 by default). Persistence counts up on
+     a hit and down on a miss. A candidate with a sub-harmonic at least SUB_RATIO times as strong takes over (octave
+     errors). On after K_ON persistence, off after HOLD frames with no hit.
   Output per frame: score = (persistence / M) x comb score, f0, harmonic count, band level, floor, detected.
 
 State is a fixed set of arrays (state_bytes()); the tables are read-only (ROM). The CNN hook is combine_cnn().
@@ -46,6 +46,7 @@ HANN_POW = float(np.sum(HANN**2))
 @dataclass(frozen=True)
 class Params:
     theta: float = 0.16  # comb score (excess whitened power, ratio to the median) for a hit
+    hold_ratio: float = 1.0  # an acquired track stays alive on scores >= hold_ratio x theta (0.5 tested: see report)
     k_on: int = 6  # persistence needed to switch on
     m_win: int = 16  # persistence cap (about 0.5 s)
     hold_frames: int = 32  # off after this many frames with no hit (about 1 s)
@@ -200,7 +201,7 @@ class Track:
             lo = max(0, self.index - TRACK_STEP)
             hi = min(GRID - 1, self.index + TRACK_STEP)
             c = lo + int(np.argmax(S[lo : hi + 1]))
-            ok, h = self._hit_ok(S, W, c, p) if S[c] >= p.theta else (False, 0)
+            ok, h = self._hit_ok(S, W, c, p) if S[c] >= p.theta * p.hold_ratio else (False, 0)
             if ok:
                 self.index = c
                 self.q = min(p.m_win, self.q + 1)

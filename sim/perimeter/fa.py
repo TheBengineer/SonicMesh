@@ -3,8 +3,9 @@
 Scenes: "rural" (continuous pink and wind plus sparse ESC events, acoustics.background.rural_scene) and "dense"
 (back-to-back ESC-50 clips at 50 dB, the stress bed). Each node gets its own seeded scene. Node alarms are onsets of
 the detector's on state, with the coarse f0 of the track at onset. The gateway rule counts an alarm when two adjacent
-nodes have onsets within GATE_WINDOW_S with f0 within GATE_F0_TOL (Doppler allowance); the gateway event time is the
-later onset.
+nodes have onsets within GATE_WINDOW_S with f0 within GATE_F0_TOL (Doppler allowance), or an octave apart (a track
+can lock onto the second harmonic at one node and the fundamental at the other); the gateway event time is the later
+onset. GATE_WINDOW_S is 30 s because adjacent-node onsets of one drone are 3 to 35 s apart (median 15 s, folds 1-3).
 """
 
 import os
@@ -26,8 +27,9 @@ from acoustics.model import FS, SELF_NOISE_DB  # noqa: E402
 from acoustics.noise import white  # noqa: E402
 from detector.detector import F0, HOP, N, Detector, Track  # noqa: E402
 
-GATE_WINDOW_S = 10.0
+GATE_WINDOW_S = 30.0
 GATE_F0_TOL = 0.12
+GATE_OCTAVE = (1.0, 2.0, 0.5)  # f0 ratios accepted as the same source
 DENSE_LEVEL_DB = 50.0
 # Memory: render long backgrounds in segments, so a worker holds ~SEGMENT_H of audio whatever the run length.
 # 2 h of float64 at 16 kS/s is 0.9 GB per array; whole-run renders across 13 workers exhausted a 30 GB machine.
@@ -110,16 +112,27 @@ def scene_alarms(kind, params_list, hours, folds, seed, nodes, procs=MAX_PROCS):
     return [{i: out[i][k] for i in range(nodes)} for k in range(len(params_list))]
 
 
+def f0_match(f1, f2):
+    """True when two f0 estimates agree within GATE_F0_TOL, directly or an octave apart."""
+    if f1 <= 0 or f2 <= 0:
+        return False
+    return any(abs(f1 / (f2 * r) - 1) <= GATE_F0_TOL for r in GATE_OCTAVE)
+
+
+def gateway_pairs(node_onsets, max_gap=1):
+    """Gateway pairs from onsets of nodes up to max_gap apart: list of (i, j, t_i, t_j), j > i."""
+    out = []
+    for i in sorted(node_onsets):
+        for j in range(i + 1, i + 1 + max_gap):
+            if j not in node_onsets:
+                continue
+            for t1, f1, _ in node_onsets[i]:
+                for t2, f2, _ in node_onsets[j]:
+                    if abs(t1 - t2) <= GATE_WINDOW_S and f0_match(f1, f2):
+                        out.append((i, j, t1, t2))
+    return out
+
+
 def gateway_events(node_onsets):
-    """Gateway events from adjacent-node onset pairs: list of event times."""
-    ev = []
-    nodes = sorted(node_onsets)
-    for i in nodes:
-        j = i + 1
-        if j not in node_onsets:
-            continue
-        for t1, f1, _ in node_onsets[i]:
-            for t2, f2, _ in node_onsets[j]:
-                if abs(t1 - t2) <= GATE_WINDOW_S and abs(f1 / f2 - 1) <= GATE_F0_TOL and f1 > 0 and f2 > 0:
-                    ev.append(max(t1, t2))
-    return ev
+    """Gateway events from adjacent-node onset pairs: list of event times (the later onset of each pair)."""
+    return [max(t1, t2) for _, _, t1, t2 in gateway_pairs(node_onsets)]
