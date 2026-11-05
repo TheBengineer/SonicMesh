@@ -49,7 +49,8 @@ taken where v0 leaves a layout or policy open:
 ## Controls
 
 - Drone: WASD or arrows move, Q/E down/up, gamepad sticks. M toggles manual and GPS-hover flight.
-- World: click to select, drag nodes and the gateway on the ground. Use the + Node and + Drone buttons, then click the ground.
+- World: click to select, drag nodes and the gateway on the ground. Use the + Node and + Drone buttons, then click the ground. Selecting opens a pop-up window with the object's tabs, joined to it by a tail. Drag its title bar to move it (it stays inside the view), drag the corner to resize, and close it with × or Esc, which also clears the selection. The side panel keeps the object list. On the 2D map (no WebGL), click and drag objects as in 3D.
+- Waterfalls: the Waterfalls button opens a strip with one live waterfall per node (first mic), and marks a tile while its node detects. Click a tile to open that node. The strip is only computed while it is open.
 - Time: P play/pause (play flies the camera to the drone unless you picked a view), `.` step one 10 ms tick, R replay, T truth overlay, F follow the drone, Del removes the selection.
 - Runs: every edit is logged with its tick. Save run downloads `sonicmesh-scenario.json` and `sonicmesh-inputs.json`. Load scenario, then Load inputs, then play to replay.
 
@@ -57,6 +58,6 @@ taken where v0 leaves a layout or policy open:
 
 - `src/sim/`: fixed-step clock, seeded PRNG, world state, input log, runner. Nothing here uses wall time or `Math.random`.
 - `src/scene/`: three.js view. It reads world state and never changes it.
-- `src/ui/`: inspector, timeline, dialogs.
+- `src/ui/`: object list and tabs, the pop-up window (`popup.ts`), the waterfall strip, timeline, dialogs.
 - `src/provenance/`: loads `provenance.yaml`, which drives every badge and the "What's real?" page.
 - `scenarios/`: `schema.json` and the example scenario.

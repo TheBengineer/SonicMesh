@@ -586,8 +586,8 @@ function selectionId(s: Selection): number | undefined {
   return s && 'id' in s ? s.id : undefined;
 }
 
-// Lets the user select gateway, nodes and drones without the 3D view.
-function objectList(ctx: InspectContext): Panel {
+// Lets the user select gateway, nodes and drones without the 3D view. This is the side panel's only content.
+export function objectList(ctx: InspectContext): Panel {
   const { world, selection } = ctx;
   const s = world.state;
   const items: { kind: string; id?: number; label: string }[] = [
@@ -610,6 +610,8 @@ function objectList(ctx: InspectContext): Panel {
   };
 }
 
+// The tabbed content of the selected object, for the pop-up window. Tabs are listed per object kind here, so a new
+// tab only touches this file.
 export function buildPanel(ctx: InspectContext): Panel {
   const sel = ctx.selection;
   const tabs: InspectTab[] = sel?.kind === 'node' ? ['details', 'waterfall', 'messages', 'health', 'ranging'] : ['details'];
@@ -625,7 +627,6 @@ export function buildPanel(ctx: InspectContext): Panel {
     }
   }
   const body = main ?? detailsPanel(ctx);
-  const list = objectList(ctx);
   const bar =
     tabs.length < 2
       ? ''
@@ -633,10 +634,32 @@ export function buildPanel(ctx: InspectContext): Panel {
           .map((t) => `<button data-action="inspector-tab" data-value="${t}" aria-selected="${t === tab}">${TAB_LABEL[t]}</button>`)
           .join('')}</div>`;
   return {
-    key: `${tab}|${list.key}|${body.key}`,
-    html: bar + list.html + body.html,
+    key: `${tab}|${body.key}`,
+    html: bar + body.html,
     live: body.live,
   };
+}
+
+// Title for the pop-up window: what the object is.
+export function objectTitle(world: World, sel: Selection): string {
+  if (sel?.kind === 'node') {
+    const n = world.state.nodes.find((o) => o.id === sel.id);
+    return n ? `Node ${n.id}, ${n.kind}` : 'Node';
+  }
+  if (sel?.kind === 'drone') {
+    const d = world.state.drones.find((o) => o.id === sel.id);
+    return d ? `Drone ${d.id}, ${DRONE_CLASSES[d.class].label}` : 'Drone';
+  }
+  if (sel?.kind === 'gateway') return 'Gateway';
+  if (sel?.kind === 'packet') return `Packet ${sel.id}`;
+  return '';
+}
+
+// False once a node or drone has been removed (or not yet added, on replay), so its window can close.
+export function selectionExists(world: World, sel: Selection): boolean {
+  if (sel?.kind === 'node') return world.state.nodes.some((o) => o.id === sel.id);
+  if (sel?.kind === 'drone') return world.state.drones.some((o) => o.id === sel.id);
+  return true;
 }
 
 export class Inspector {

@@ -6,6 +6,7 @@ import type { NodeKind } from '../sim/scenario';
 import { placeTrees, type Terrain } from '../sim/terrain';
 import { DRONE_CLASSES, type World, type WorldState } from '../sim/world';
 import type { DroneClass } from '../sim/scenario';
+import type { Point, ScreenPos } from '../ui/popup';
 
 const FATE_COLOR: Record<string, number> = {
   decoded: 0x3ddc84,
@@ -51,6 +52,13 @@ export interface Hit {
   x: number;
   y: number;
 }
+
+// How close the pointer must be to a marker in the 2D map to pick it, in pixels.
+const PICK_PX = 16;
+// Blank margin around the terrain in the 2D map, in pixels.
+const MAP_MARGIN_PX = 16;
+// Lift of the anchor above the ground, so the window points at the mast or body rather than its foot.
+const ANCHOR_LIFT_M = { node: 3, gateway: 4, packet: 4 } as const;
 
 const SKY = 0xaed0e0;
 
@@ -263,6 +271,8 @@ export class WorldView {
   private view: ViewMode = 'orbit';
   private followId: number | null = null;
   private flight: { startMs: number; fromPos: THREE.Vector3; fromTarget: THREE.Vector3 } | null = null;
+  // The last state handed to sync(), for screenPos and the 2D picking.
+  private snap: { world: World; state: WorldState; lora: LoraView | null; nowS: number } | null = null;
 
   constructor(private readonly container: HTMLElement) {
     const renderer = createRenderer();
@@ -367,6 +377,7 @@ export class WorldView {
 
   // Makes three.js objects match world state. Rendering only reads state.
   sync(world: World, state: WorldState, selection: Selection, lora: LoraView | null = null, nowS = 0): void {
+    this.snap = { world, state, lora, nowS };
     if (!this.renderer) {
       this.draw2d(world, state, selection, lora, nowS);
       return;
@@ -514,6 +525,20 @@ export class WorldView {
 
   private lastMap = { w: 1, h: 1 };
 
+  // Sim metres to map pixels, and back. The map fits the terrain with a margin, north up.
+  private mapTransform(terrain: Terrain): { scale: number; sx(x: number): number; sy(y: number): number; inv(p: Point): Point } {
+    const { w, h } = this.lastMap;
+    const [sw, sh] = terrain.size;
+    const m = MAP_MARGIN_PX;
+    const scale = Math.min((w - 2 * m) / sw, (h - 2 * m) / sh);
+    return {
+      scale,
+      sx: (x: number): number => m + (x + sw / 2) * scale,
+      sy: (y: number): number => m + (sh / 2 - y) * scale,
+      inv: (p: Point): Point => ({ x: (p.x - m) / scale - sw / 2, y: sh / 2 - (p.y - m) / scale }),
+    };
+  }
+
   private draw2d(world: World, state: WorldState, selection: Selection, lora: LoraView | null, nowS: number): void {
     const canvas = this.map;
     const ctx = this.mapCtx;
@@ -521,10 +546,8 @@ export class WorldView {
     const { w, h } = this.lastMap;
     const terrain = world.terrain;
     const [sw, sh] = terrain.size;
-    const m = 16;
-    const scale = Math.min((w - 2 * m) / sw, (h - 2 * m) / sh);
-    const sx = (x: number): number => m + (x + sw / 2) * scale;
-    const sy = (y: number): number => m + (sh / 2 - y) * scale;
+    const { sx, sy, scale } = this.mapTransform(terrain);
+    const m = MAP_MARGIN_PX;
     ctx.clearRect(0, 0, w, h);
     ctx.fillStyle = '#16221a';
     ctx.fillRect(sx(-sw / 2), sy(sh / 2), sw * scale, sh * scale);
@@ -604,10 +627,72 @@ export class WorldView {
     ctx.fillText('lines: green decoded, amber collision, red range, purple half-duplex', m, h - 26);
   }
 
+  // Where an object sits in sim coordinates, or null if it is gone.
+  private anchorOf(selection: Selection): { x: number; y: number; h: number } | null {
+    const snap = this.snap;
+    if (!snap || !selection) return null;
+    const { state, world, lora } = snap;
+    const terrain = world.terrain;
+    const onGround = (x: number, y: number, lift: number): { x: number; y: number; h: number } => ({
+      x,
+      y,
+      h: terrain.height(x, y) + lift,
+    });
+    switch (selection.kind) {
+      case 'node': {
+        const n = state.nodes.find((o) => o.id === selection.id);
+        return n ? onGround(n.x, n.y, ANCHOR_LIFT_M.node) : null;
+      }
+      case 'drone': {
+        const d = state.drones.find((o) => o.id === selection.id);
+        return d ? { x: d.x, y: d.y, h: d.alt } : null;
+      }
+      case 'gateway':
+        return onGround(state.gateway.x, state.gateway.y, ANCHOR_LIFT_M.gateway);
+      case 'packet': {
+        // A packet belongs to its transmitter.
+        const p = lora?.packets.find((o) => o.id === selection.id);
+        if (!p) return null;
+        if (p.tx === 0) return onGround(state.gateway.x, state.gateway.y, ANCHOR_LIFT_M.packet);
+        const n = state.nodes.find((o) => o.id === p.tx);
+        return n ? onGround(n.x, n.y, ANCHOR_LIFT_M.packet) : null;
+      }
+      default:
+        return null;
+    }
+  }
+
+  // The object's position in view pixels, for the pop-up window and its tail. Null if the object is gone or there is
+  // no frame yet. Off screen or behind the camera, the point lies outside the view in the direction of the object.
+  screenPos(selection: Selection): ScreenPos | null {
+    const a = this.anchorOf(selection);
+    if (!a) return null;
+    const w = Math.max(1, this.container.clientWidth);
+    const h = Math.max(1, this.container.clientHeight);
+    const terrain = this.snap?.world.terrain;
+    if (!terrain) return null;
+    if (!this.renderer) {
+      const { sx, sy } = this.mapTransform(terrain);
+      const x = sx(a.x);
+      const y = sy(a.y);
+      return { x, y, visible: x >= 0 && x <= w && y >= 0 && y <= h };
+    }
+    this.camera.updateMatrixWorld();
+    const v = toScene(a.x, a.y, a.h);
+    const behind = v.clone().applyMatrix4(this.camera.matrixWorldInverse).z > 0;
+    const ndc = v.project(this.camera);
+    // A point behind the camera projects to the mirror image of its direction, so flip it and push it far out.
+    const nx = behind ? -ndc.x * 1e3 : ndc.x;
+    const ny = behind ? -ndc.y * 1e3 : ndc.y;
+    const x = ((nx + 1) / 2) * w;
+    const y = ((1 - ny) / 2) * h;
+    return { x, y, visible: !behind && x >= 0 && x <= w && y >= 0 && y <= h };
+  }
+
   // Returns what is under the pointer, or the ground point if nothing else is.
   pick(clientX: number, clientY: number): Hit | null {
     const renderer = this.renderer;
-    if (!renderer) return null;
+    if (!renderer) return this.pick2d(clientX, clientY);
     this.setPointer(renderer.domElement, clientX, clientY);
     this.raycaster.setFromCamera(this.pointer, this.camera);
     const roots: THREE.Object3D[] = [this.nodeGroup, this.droneGroup, this.gateway];
@@ -623,10 +708,43 @@ export class WorldView {
     return null;
   }
 
+  // 2D map picking: the nearest marker within PICK_PX, else the ground point if it is on the terrain.
+  private pick2d(clientX: number, clientY: number): Hit | null {
+    const canvas = this.map;
+    const snap = this.snap;
+    if (!canvas || !snap) return null;
+    const rect = canvas.getBoundingClientRect();
+    const p = { x: clientX - rect.left, y: clientY - rect.top };
+    const { state, world } = snap;
+    const { sx, sy, inv } = this.mapTransform(world.terrain);
+    const near: { d: number; hit: Hit }[] = [];
+    const consider = (target: Target, x: number, y: number): void => {
+      const d = Math.hypot(sx(x) - p.x, sy(y) - p.y);
+      if (d <= PICK_PX) near.push({ d, hit: { target, x, y } });
+    };
+    for (const n of state.nodes) consider({ kind: 'node', id: n.id }, n.x, n.y);
+    consider({ kind: 'gateway' }, state.gateway.x, state.gateway.y);
+    for (const d of state.drones) consider({ kind: 'drone', id: d.id }, d.x, d.y);
+    if (near.length > 0) return near.reduce((a, b) => (b.d < a.d ? b : a)).hit;
+    const g = inv(p);
+    const [sw, sh] = world.terrain.size;
+    if (Math.abs(g.x) > sw / 2 || Math.abs(g.y) > sh / 2) return null;
+    return { target: { kind: 'terrain' }, x: g.x, y: g.y };
+  }
+
   // The ground point under the pointer, for dragging.
   groundAt(clientX: number, clientY: number): { x: number; y: number } | null {
     const renderer = this.renderer;
-    if (!renderer || !this.terrainMesh) return null;
+    if (!renderer) {
+      const canvas = this.map;
+      const snap = this.snap;
+      if (!canvas || !snap) return null;
+      const rect = canvas.getBoundingClientRect();
+      const g = this.mapTransform(snap.world.terrain).inv({ x: clientX - rect.left, y: clientY - rect.top });
+      const [sw, sh] = snap.world.terrain.size;
+      return Math.abs(g.x) > sw / 2 || Math.abs(g.y) > sh / 2 ? null : g;
+    }
+    if (!this.terrainMesh) return null;
     this.setPointer(renderer.domElement, clientX, clientY);
     this.raycaster.setFromCamera(this.pointer, this.camera);
     const hit = this.raycaster.intersectObject(this.terrainMesh, false)[0];

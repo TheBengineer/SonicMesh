@@ -7,6 +7,9 @@ export const WF_N = 1024;
 export const WF_HOP = 512;
 export const WF_BINS = WF_N / 2;
 export const WF_COLS = 300;
+// Size of a small strip tile in the all-nodes panel: the newest TILE_COLS columns, rows sampled from the bins.
+export const TILE_COLS = 200;
+export const TILE_ROWS = 96;
 const LEVEL_WIN = 1600;
 const LEVEL_COLS = 300;
 const DB_LO = 10;
@@ -51,6 +54,7 @@ export class MicAnalysis {
   private levelCount = 0;
   private levelCursor = 0;
   private image: ImageData | null = null;
+  private tileImage: ImageData | null = null;
 
   constructor(readonly key: string) {}
 
@@ -75,6 +79,44 @@ export class MicAnalysis {
     const out = new Array<number>(n);
     for (let i = 0; i < n; i++) out[i] = this.bands[(this.levelCount - n + i) % LEVEL_COLS];
     return out;
+  }
+
+  // Latest band level in dB, or null before the first 100 ms of audio.
+  latestBandDb(): number | null {
+    return this.levelCount === 0 ? null : this.bands[(this.levelCount - 1) % LEVEL_COLS];
+  }
+
+  // The same columns and colours as drawWaterfall, at tile size. Rows are sampled, so a tile is a small view of the
+  // full spectrogram at a fraction of its cost.
+  drawStrip(canvas: HTMLCanvasElement): void {
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const w = Math.min(canvas.width, WF_COLS);
+    const h = canvas.height;
+    if (!this.tileImage || this.tileImage.width !== w || this.tileImage.height !== h) {
+      this.tileImage = ctx.createImageData(w, h);
+    }
+    const data = this.tileImage.data;
+    for (let r = 0; r < h; r++) {
+      // Row 0 is the top, so it shows the highest bin.
+      const k = Math.min(WF_BINS - 1, Math.floor(((h - 1 - r + 0.5) * WF_BINS) / h));
+      for (let c = 0; c < w; c++) {
+        const seq = this.colCount - w + c;
+        const o = (r * w + c) * 4;
+        if (seq < 0) {
+          data[o] = 0;
+          data[o + 1] = 0;
+          data[o + 2] = 0;
+        } else {
+          const j = this.cols[(seq % WF_COLS) * WF_BINS + k] * 3;
+          data[o] = LUT[j];
+          data[o + 1] = LUT[j + 1];
+          data[o + 2] = LUT[j + 2];
+        }
+        data[o + 3] = 255;
+      }
+    }
+    ctx.putImageData(this.tileImage, 0, 0);
   }
 
   drawWaterfall(canvas: HTMLCanvasElement, overlay: boolean): void {

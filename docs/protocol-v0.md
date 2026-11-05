@@ -17,11 +17,9 @@ Pi with a LoRa radio. A *cluster* is one controller and the nodes it schedules.
    are linked in a mesh (the backbone). Inside a cluster, most nodes reach the controller directly
    (28–39 dB of margin at 350 m spacing, doc 02); nodes behind terrain go through a scheduled relay.
    Most traffic stays local; only summaries cross the backbone (section 3a).
-2. **Region: US915 first.** The event layer runs 500 kHz channels at tens of percent occupancy.
-   US915 allows that (digital modulation, ≥ 500 kHz bandwidth, no dwell limit). **EU868 does not**:
-   its 1% duty cycle in 868.0–868.6 MHz rules out the event layer as designed, and only the
-   869.4–869.65 MHz sub-band allows 10%. An EU build needs its own plan (SF7/250 kHz event slots
-   in 869.525, fewer TDOA bursts). Tracked as an open question.
+2. **Region: United States (US915).** The event layer's 500 kHz channels at tens of percent occupancy
+   are allowed there (digital modulation, ≥ 500 kHz bandwidth, no dwell limit). The 125 kHz idle
+   layer hops channel by superframe counter (see section 3); confirm the FCC details before hardware.
 3. **Each controller owns its cluster's time.** Its GNSS-disciplined beacon defines every slot.
    Detector nodes (no GNSS) time-stamp the beacon's RxDone and run their sample clock against it;
    array nodes also check against their own PPS. All controllers use GNSS time, so superframes line
@@ -59,7 +57,9 @@ Overhead: 7 bytes. LoRa CRC on, explicit header.
 - Each node's `HEALTH` comes round every 75 superframes (5 min), staggered by node id.
 - Worst-case alert latency: ≤ 4 s to the controller, + 4 s until the next beacon switches modes.
   (Phase 4 target: ≤ 5 s to the operator. Tighten by beaconing the mode switch immediately.)
-- Gateway beacon duty: 5% (fine in US915; in EU868 only in 869.4–869.65 MHz).
+- Controller beacon duty: 5%.
+- US915 rules generally require frequency hopping below 500 kHz, so idle frames hop across the
+  125 kHz channels by superframe counter. A 206 ms beacon is inside the 400 ms dwell limit.
 
 ### Event mode — SF7 / 500 kHz, superframe 500 ms (2 Hz updates)
 
@@ -78,7 +78,7 @@ Overhead: 7 bytes. LoRa CRC on, explicit header.
 
 | Tier | Link | Carries | Stays off it |
 |---|---|---|---|
-| **Backbone** | Controller ↔ controller mesh. Bearer undecided (section 7) | Crossing events and tracks, `HANDOFF` to the next cluster, health roll-ups, configuration | Raw `DETECT`, `HEALTH` and ranging frames; snippets unless a fusion step asks for one |
+| **Backbone** | Controller ↔ controller mesh on its own LoRa channel (SF8 / 500 kHz); a second radio in each controller. Observer stations listen | Crossing events and tracks, `HANDOFF`, health roll-ups, configuration | Raw `DETECT`, `HEALTH` and ranging frames; snippets |
 | **Cluster** | LoRa, the schedule above. One controller, up to about 13 nodes (the example line is ~4 km) | All node traffic in sections 3–5, including scheduled relays | |
 | **Node ↔ node** | The same LoRa frames, overheard | Neighbour detections and local fixes (section 3b) | |
 
@@ -89,8 +89,52 @@ Overhead: 7 bytes. LoRa CRC on, explicit header.
   stays deterministic. Each relayed frame uses a slot, which reduces the cluster's capacity.
 - **`HANDOFF`.** When a track heads for a neighbouring cluster, the controller sends it the track
   state (section 4) over the backbone. That cluster enters event mode before the drone arrives.
-- **Rough backbone load (estimate):** one track update of ~32 B at 2 Hz is ~0.5 kbit/s per active
-  track, plus occasional roll-ups. A low-rate backbone is enough unless snippets cross it.
+- **Backbone schedule.** A 500 ms GNSS-timed superframe with 3 origin slots and 3 relay slots of about
+  45 ms each: a 32 B message plus the 7 B frame takes 38.5 ms at SF8/500. Each controller repeats
+  frames it hears once (flooding), so losing the middle controller doesn't split the backbone.
+- **Observer stations** sit behind the line, listen on the backbone channel and never transmit. They
+  decode and verify frames, and show alerts, tracks, health and coverage. Because they can't ask
+  for a repeat, controllers re-send the full track state every update and a state snapshot every 30 s.
+
+### 3a-1. Layout: three subsections
+
+The perimeter stays as it was (13 nodes at 350 m, about 4.2 km), split into three subsections:
+
+| Subsection | Nodes | Controller, primary for those nodes | Position (x, y) |
+|---|---|---|---|
+| A | 1–4 | A | −1400, −250 m |
+| B | 5–9 | B | 0, −250 m |
+| C | 10–13 | C | +1400, −250 m |
+
+Observer stations (example): (−1200, −850), (0, −850), (+1200, −850) m, about 600 m behind the nearest
+controller.
+
+**Link margins** from `lora_budget.py`, before shadowing (ASSUMED path-loss exponent 3, 20 dBm, 2 dBi):
+
+| Link | Range | Idle SF9/125 | Event SF7/500 | Backbone SF8/500 |
+|---|---|---|---|---|
+| Node → primary, worst | 743 m | 35.7 dB | 24.7 dB | |
+| Node → secondary, best | 743 m (nodes 5, 9) | 35.7 dB | 24.7 dB | |
+| Node → secondary, worst | 2,115 m (nodes 1, 13) | 22.1 dB | 11.1 dB | |
+| Controller → neighbour | 1,400 m | | | 18.9 dB |
+| Controller A → C, skipping B | 2,800 m | | | 9.9 dB |
+
+### 3a-2. Controller failure
+
+**Placement rule.** Every node must reach a primary and a secondary controller. At install, or from
+planning on the map, the primary link needs ≥ 15 dB and the secondary ≥ 6 dB at the event setting;
+otherwise move the node or assign a relay. Node 1's and 13's secondary is the longest link at 2.1 km.
+
+**Failover.**
+- The join reply gives each node a primary and a secondary controller, with their channels and hop seed.
+- A node that misses 3 beacons in a row (12 s idle, 1.5 s in event mode) moves to its secondary and sends
+  `JOIN` in that controller's next scheduled slot.
+- Controllers see a neighbour's loss on the backbone and reserve slots for its nodes before they arrive.
+- Slots are enough: with B down, its 5 nodes split between A and C (at most 7 nodes each, against
+  16 event slots and 14 idle slots). With two down, all 13 fit in the slots, but the far end has
+  only ~2 dB at the event setting (4.2 km), so those nodes stay on SF9 and send less.
+- Nodes return when the primary's beacon has been back for 1 minute. Node-to-node keeps running throughout.
+- The fallback link is weaker, so event-mode traffic may step down a spreading factor per node.
 
 ### 3b. Node-to-node
 
@@ -150,8 +194,8 @@ reports `RANGING_RESULT`. Never during events.
 
 ## 6. Controller → operator (sketch)
 
-Any controller can serve this, with the backbone behind it. JSON over a local network socket
-(newline-delimited), versioned:
+Observer stations decode backbone frames into this form for their displays and any local client.
+JSON over a local network socket (newline-delimited), versioned:
 
 ```json
 {"v": 0, "type": "alert", "id": "evt-0192", "t": "2026-11-04T17:03:21.250Z",
@@ -165,14 +209,9 @@ noise floors), and `gap` (segment without a working node or controller).
 
 ## 7. Open questions
 
-- EU868 event-layer plan, if needed.
 - Whether 1-of-4 slotted ALOHA in the alert window is enough when a drone triggers 5+ nodes at
   once (simulate in M3; fallback: each node also gets a 1-in-N reserved alert slot).
-- Backbone bearer: LoRa on its own channel with raised antennas, Wi-Fi HaLow or point-to-point
-  links. The simulation treats it as an abstract link with latency, capacity and loss until chosen.
-- Losing a controller: can a neighbour adopt its nodes, or do they run node-to-node only until it's back?
 - Relay assignment for nodes behind terrain, and cluster size once relays use up slots.
-- US915 rules for narrow channels: FCC 15.247 generally requires frequency hopping below 500 kHz, so
-  the 125 kHz idle layer probably has to hop rather than sit on one channel. Check before hardware.
+- Confirm the US915 details with a compliance lab before hardware: hopping set and dwell on the 125 kHz layer, and power limits at 500 kHz.
 - Key management: site key provisioning alongside the acoustic provisioning (doc 05 uses the
   same site key for the phone frames).

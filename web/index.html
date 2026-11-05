@@ -34,6 +34,7 @@
             </select>
           </div>
           <div class="group">
+            <button id="open-waterfalls" aria-pressed="false" title="One live waterfall per node">Waterfalls</button>
             <button id="open-whats-real">What's real?</button>
             <button id="open-about">About</button>
           </div>
@@ -44,10 +45,11 @@
         </details>
         <div id="help" class="panel float hint">
           Drag nodes and the gateway on the ground. Keys: WASD / arrows move, Q/E down/up, M manual or GPS mode,
-          P play/pause, . step, R replay, F follow, T truth, Del remove.
+          P play/pause, . step, R replay, F follow, T truth, Del remove, Esc close the pop-up.
         </div>
       </main>
       <aside id="inspector" class="panel"></aside>
+      <section id="waterfalls" class="panel" hidden></section>
       <footer id="timeline" class="panel"></footer>
     </div>
     <dialog id="about-dialog" class="overlay"></dialog>

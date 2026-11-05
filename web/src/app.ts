@@ -9,8 +9,22 @@ import type { Selection } from './selection';
 import { WorldView, type Hit, type Target, type ViewMode } from './scene/worldView';
 import { drawTraces, type Trace } from './ui/charts';
 import { badgeHtml, download, esc, need, readJson } from './ui/dom';
-import { Inspector, buildPanel, micKeysOf, type ActionData, type InspectTab, type InspectView, type MessageFilter } from './ui/inspector';
+import {
+  Inspector,
+  buildPanel,
+  micKeysOf,
+  objectList,
+  objectTitle,
+  selectionExists,
+  type ActionData,
+  type InspectContext,
+  type InspectTab,
+  type InspectView,
+  type MessageFilter,
+} from './ui/inspector';
 import { renderAbout, renderLedger } from './ui/overlays';
+import { Popup } from './ui/popup';
+import { WaterfallStrip, type StripNode } from './ui/waterfalls';
 import { Timeline, type TimelineInfo } from './ui/timeline';
 import { parseInputLog, type LogEntry } from './sim/inputs';
 import { parseScenario, type DroneClass, type FlightMode, type NodeKind, type PathSpec, type ScenarioFile } from './sim/scenario';
@@ -27,6 +41,8 @@ const DRONE_DROP_ALT_M = 30;
 const ROTOR_COLORS = ['#5fb4ff', '#3fbf71', '#d6a23f', '#e0605a'];
 const BAND_COLOR = '#5fb4ff';
 const SNR_COLOR = '#d6a23f';
+// The all-nodes strip redraws this often. Its tiles are small, so 20 Hz is smooth and cheap.
+const STRIP_EVERY_MS = 50;
 
 function nextId(ids: number[]): number {
   return Math.max(0, ...ids) + 1;
@@ -207,6 +223,8 @@ export function startApp(root: HTMLElement): void {
   let listenKey: string | null = null;
   let gain = 1;
   let analysis: MicAnalysis | null = null;
+  // The all-nodes waterfall strip. Closed, it asks the worker for no extra mics and does no analysis.
+  let wfOpen = false;
 
   function flash(text: string): void {
     message = text;
@@ -214,9 +232,12 @@ export function startApp(root: HTMLElement): void {
     messageTimer = window.setTimeout(() => (message = ''), 6000);
   }
 
+  // Selecting opens the object's window; clearing the selection closes it.
   function select(s: Selection): void {
     selection = s;
     if (viewMode === 'follow' && s?.kind === 'drone') view.setView('follow', s.id);
+    if (s === null) popup.close();
+    else if (!popup.isOpen) popup.show(view.screenPos(s));
   }
 
   function setViewMode(v: ViewMode, smooth = false): void {
@@ -337,11 +358,13 @@ export function startApp(root: HTMLElement): void {
   // Tells the sim worker what the page is showing, so it sends only the traces it needs.
   function syncInspect(): void {
     const drone = selection?.kind === 'drone' ? selection.id : null;
-    const wf = nodeTab === 'waterfall' ? waterfallMic() : null;
+    const wf = popup.isOpen && nodeTab === 'waterfall' ? waterfallMic() : null;
     const mics: string[] = [];
     if (wf) mics.push(wf);
+    // The strip needs the first mic of every node, and only while it is open.
+    if (wfOpen) for (const n of frameNow().state.nodes) mics.push(micKeysOf(n)[0]);
     if (listenKey && !mics.includes(listenKey)) mics.push(listenKey);
-    const req: InspectRequest = { drone, mics, truthKey: wf };
+    const req: InspectRequest = { drone, mics: [...new Set(mics)], truthKey: wf };
     const s = JSON.stringify(req);
     if (s !== lastInspect) {
       lastInspect = s;
@@ -413,7 +436,21 @@ export function startApp(root: HTMLElement): void {
     refresh();
   }
 
-  const inspector = new Inspector(inspectorEl, onAction);
+  const objects = new Inspector(inspectorEl, onAction);
+  const popup = new Popup({
+    container: need<HTMLElement>(root, '#viewport'),
+    onClose: () => {
+      select(null);
+      refresh();
+    },
+  });
+  const popupInspector = new Inspector(popup.body, onAction);
+  const waterfallsEl = need<HTMLElement>(root, '#waterfalls');
+  const waterfallButton = need<HTMLButtonElement>(root, '#open-waterfalls');
+  const strip = new WaterfallStrip(waterfallsEl, badgeHtml(ledger.byId.get(COMPONENT.waterfall)), (id) => {
+    select({ kind: 'node', id });
+    refresh();
+  });
   const timeline = new Timeline(need<HTMLElement>(root, '#timeline'), {
     togglePlay,
     step: () => host.step(),
@@ -545,6 +582,12 @@ export function startApp(root: HTMLElement): void {
       case 'Backspace':
         removeSelected();
         break;
+      case 'Escape':
+        if (selection) {
+          select(null);
+          refresh();
+        }
+        break;
     }
   });
   window.addEventListener('keyup', (e) => keysDown.delete(e.code));
@@ -568,15 +611,17 @@ export function startApp(root: HTMLElement): void {
   // Node waterfall: the spectrogram and band level are read from the mic's audio ring, and the drone plots from the
   // latest frame. Canvases are looked up each time because the inspector rebuilds its DOM when its key changes.
   function drawPlots(f: Frame): void {
+    if (!popup.isOpen) return;
+    const body = popup.body;
     const mic = nodeTab === 'waterfall' ? waterfallMic() : null;
     const ring = mic ? host.ring(mic) : undefined;
-    const wf = inspectorEl.querySelector<HTMLCanvasElement>('canvas[data-plot="waterfall"]');
+    const wf = body.querySelector<HTMLCanvasElement>('canvas[data-plot="waterfall"]');
     if (mic && ring && wf) {
       if (!analysis || analysis.key !== mic) analysis = new MicAnalysis(mic);
       const lines = f.truth && f.truth.key === mic && f.state.truth ? f.truth.lines.map((l) => l.hz) : null;
       analysis.update(ring, lines);
       analysis.drawWaterfall(wf, overlay && lines !== null);
-      const level = inspectorEl.querySelector<HTMLCanvasElement>('canvas[data-plot="level"]');
+      const level = body.querySelector<HTMLCanvasElement>('canvas[data-plot="level"]');
       if (level) {
         const band = analysis.bandDb();
         const floor = noiseFloor(scenario).db;
@@ -585,18 +630,43 @@ export function startApp(root: HTMLElement): void {
         drawTraces(level, traces, { unit: 'dB', xLabel: 'last 10 s' });
       }
     }
-    const rotors = inspectorEl.querySelector<HTMLCanvasElement>('canvas[data-plot="rotors"]');
+    const rotors = body.querySelector<HTMLCanvasElement>('canvas[data-plot="rotors"]');
     if (f.rotors && rotors && selection?.kind === 'drone' && f.rotors.id === selection.id) drawRotors(rotors, f.rotors);
-    const spectrum = inspectorEl.querySelector<HTMLCanvasElement>('canvas[data-plot="spectrum"]');
+    const spectrum = body.querySelector<HTMLCanvasElement>('canvas[data-plot="spectrum"]');
     if (f.spectrum && spectrum && selection?.kind === 'drone' && f.spectrum.id === selection.id) {
       drawSpectrum(spectrum, f.spectrum);
     }
   }
 
+  // Shows or hides the strip. Opening it asks the worker for the node mics; closing it drops the analysis.
+  function setWaterfalls(on: boolean): void {
+    wfOpen = on;
+    waterfallsEl.hidden = !on;
+    waterfallButton.setAttribute('aria-pressed', String(on));
+    if (!on) strip.clear();
+    refresh();
+  }
+
+  function drawStrip(f: Frame): void {
+    const nodes: StripNode[] = f.state.nodes.map((n) => ({
+      id: n.id,
+      kind: n.kind,
+      mic: micKeysOf(n)[0],
+      detecting: f.lora?.nodes.find((v) => v.id === n.id)?.detecting ?? false,
+    }));
+    strip.update(nodes, selection?.kind === 'node' ? selection.id : null, (key) => host.ring(key));
+  }
+
   function refresh(): void {
     const f = frameNow();
     const world = worldNow();
-    inspector.update(buildPanel({ world, selection, ledger, view: inspectView(), lora: f.lora }));
+    if (selection && !selectionExists(world, selection)) select(null);
+    const ctx: InspectContext = { world, selection, ledger, view: inspectView(), lora: f.lora };
+    objects.update(objectList(ctx));
+    if (selection) {
+      popupInspector.update(buildPanel(ctx));
+      popup.setTitle(objectTitle(world, selection));
+    }
     const present = presentIds(world, scenario);
     const legend = ledger.entries
       .filter((e) => present.has(e.id))
@@ -612,6 +682,7 @@ export function startApp(root: HTMLElement): void {
 
   let last = performance.now();
   let sinceRefresh = 0;
+  let sinceStrip = 0;
   function frame(now: number): void {
     const wall = Math.min(now - last, 250);
     last = now;
@@ -619,6 +690,7 @@ export function startApp(root: HTMLElement): void {
     const f = frameNow();
     view.sync(worldNow(), f.state, selection, f.lora, f.simTimeS);
     view.render();
+    if (popup.isOpen) popup.update(selection ? view.screenPos(selection) : null);
     drawPlots(f);
     listener.sync(f);
     sinceRefresh += wall;
@@ -626,9 +698,15 @@ export function startApp(root: HTMLElement): void {
       sinceRefresh = 0;
       refresh();
     }
+    sinceStrip += wall;
+    if (wfOpen && sinceStrip >= STRIP_EVERY_MS) {
+      sinceStrip = 0;
+      drawStrip(f);
+    }
     requestAnimationFrame(frame);
   }
 
+  waterfallButton.addEventListener('click', () => setWaterfalls(!wfOpen));
   setViewMode('orbit');
   refresh();
   requestAnimationFrame(frame);

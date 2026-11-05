@@ -9,7 +9,7 @@ It works as a tripwire: for each crossing it says where along the line, which wa
 
 - **Acoustic** detection on the node: an FFT harmonic detector, then a small CNN that rejects other noise sources.
 - **Remote ID** scanning (BLE/Wi-Fi). Receive-only, apart from LoRa.
-- **Network:** local clusters of nodes on LoRa, with synced timestamps, joined by a backbone mesh between controllers so the line can cross terrain. Only summaries cross the backbone. Neighbouring nodes also hear each other directly, for faster fixes.
+- **Network:** local clusters of nodes on LoRa, with synced timestamps, joined by a mesh between three controllers on its own LoRa channel, so the line can cross terrain. Only summaries cross it, and observer stations behind the line listen in. Each node can reach a second controller if its own fails. Neighbouring nodes also hear each other directly, for faster fixes.
 - **Placement:** the installer's phone plays its GPS fix to the node as sound. Periodic LoRa ranging between neighbours checks that nodes haven't moved.
 - **Health:** a 23-byte report on every 5-minute heartbeat (battery, mic, tamper, link, clock), paused during drone events.
 

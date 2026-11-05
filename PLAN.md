@@ -26,8 +26,10 @@ Design: [message format and schedule v0](docs/protocol-v0.md).
 - **Output:** crossing alerts with segment, time, direction, class and confidence.
 
 **Network.** Backbone + local mesh clusters ([protocol](docs/protocol-v0.md), sections 3a–3b).
-Controllers link in a mesh, so the line can cross ridges and rivers. Each controller runs a LoRa
-cluster of nodes, and only summaries cross the backbone. Neighbouring nodes hear each other
+Three controllers, one for each subsection of the line, link in a mesh on their own LoRa channel, so the
+line can cross ridges and rivers. Each runs a LoRa cluster of nodes, and only summaries cross the
+backbone. Observer stations behind the line listen to the backbone. Every node can also reach a
+second controller at slightly longer range, and moves there if its own fails. Neighbouring nodes hear each other
 directly, for faster confirmation and fixes in the first seconds, at cluster boundaries and behind
 terrain.
 
@@ -198,15 +200,13 @@ See [docs/web-demo-plan.md](docs/web-demo-plan.md).
 | Gaps in the line (node failure, terrain, noise) | Spacing margin, health heartbeat, live coverage map, optional second row. |
 | Node moved, swapped or impersonated | Accelerometer tamper flag, periodic ranging integrity check, authenticated messages. |
 | LoRa congestion during events | TDMA, aggregate messages per track, optional burst layer only on request. |
-| Backbone or controller loss splits the line | Clusters keep working alone and buffer alerts; node-to-node still runs. Adoption by a neighbouring controller is an open question. |
+| Controller or backbone loss | Clusters keep working alone and buffer alerts; node-to-node still runs. Every node has a second controller in reach (protocol section 3a-2). |
 | Regulatory | Receive-only RF. LoRa within regional duty and dwell rules. Legal test flights. No raw audio stored or sent outside R&D. |
 
 ## 6. Open questions
 
-1. **Backbone bearer:** LoRa on its own channel with raised antennas, Wi-Fi HaLow or point-to-point links?
-2. **Perimeter:** length, terrain, and how dense the background noise is (rural or urban)?
-3. **Target classes:** consumer camera drones, FPV, larger fixed-wing? This drives the bands and the training data.
-4. **Region:** EU868 or US915? [Protocol v0](docs/protocol-v0.md) targets US915: EU868's 1% duty cycle rules out the 500 kHz event layer as designed, so an EU build needs its own plan.
+1. **Perimeter:** real site terrain, and how dense the background noise is (rural or urban)?
+2. **Target classes:** consumer camera drones, FPV, larger fixed-wing? This drives the bands and the training data.
 
 ## 7. Immediate next steps
 
