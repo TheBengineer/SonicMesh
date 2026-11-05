@@ -1,14 +1,75 @@
-import type { DetectSpan } from '../lora/types';
+import type { DetectSpan, DetectState } from '../lora/types';
+import { DETECTION_THRESHOLD_DB } from '../lora/nodeStub';
 
 // The band the detector adds up, the same one the band level uses.
 export const BAND_LO_HZ = 100;
 export const BAND_HI_HZ = 4000;
 
-const SPAN_FILL = 'rgba(95, 180, 255, 0.14)';
 const SPAN_EDGE = '#5fb4ff';
 const LINE_COLOR = '#3ddc84';
 const TRACE_EDGE = 'rgba(0, 0, 0, 0.7)';
 const BAND_COLOR = 'rgba(255, 255, 255, 0.6)';
+
+// The meter stretches the low end, or the threshold would be lost next to a close pass: the threshold sits a quarter of
+// the way up and METER_TOP_DB fills it.
+export const METER_TICK = 0.25;
+const METER_TOP_DB = 20;
+
+export function meterFraction(marginDb: number): number {
+  if (marginDb <= 0) return 0;
+  if (marginDb <= DETECTION_THRESHOLD_DB) return (marginDb / DETECTION_THRESHOLD_DB) * METER_TICK;
+  const above = (marginDb - DETECTION_THRESHOLD_DB) / (METER_TOP_DB - DETECTION_THRESHOLD_DB);
+  return Math.min(1, METER_TICK + above * (1 - METER_TICK));
+}
+
+export const STATE_COLOR: Record<DetectState, string> = { quiet: '#6b7785', arming: '#ffb347', detecting: '#ff4d6d' };
+
+export interface LevelSample {
+  t: number;
+  marginDb: number;
+  state: DetectState;
+}
+
+// A node's recent level and state, taken from the frames the sim sends. It restarts when sim time goes back.
+export class LevelHistory {
+  static readonly STEP_S = 0.1;
+  static readonly MAX = 150;
+  readonly samples: LevelSample[] = [];
+
+  push(sample: LevelSample): void {
+    const last = this.samples.at(-1);
+    if (last && sample.t < last.t) this.samples.length = 0;
+    else if (last && sample.t - last.t < LevelHistory.STEP_S) {
+      // Keep the latest state, so a change between samples is not lost.
+      if (sample.state !== 'quiet') last.state = sample.state;
+      return;
+    }
+    this.samples.push({ ...sample });
+    if (this.samples.length > LevelHistory.MAX) this.samples.shift();
+  }
+}
+
+// One row of colour per sample, on the same time axis as the waterfall above it. Brighter is louder.
+export function drawLevelStrip(canvas: HTMLCanvasElement, samples: LevelSample[], tNewest: number, cols: number, secPerCol: number): void {
+  if (canvas.width !== cols || canvas.height !== 1) {
+    canvas.width = cols;
+    canvas.height = 1;
+  }
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  ctx.clearRect(0, 0, cols, 1);
+  const x = (t: number): number => cols - 1 - (tNewest - t) / secPerCol;
+  samples.forEach((s, i) => {
+    const end = samples[i + 1]?.t ?? tNewest;
+    const a = x(s.t);
+    const b = x(end);
+    if (b < 0 || a > cols) return;
+    ctx.globalAlpha = 0.35 + 0.65 * meterFraction(s.marginDb);
+    ctx.fillStyle = STATE_COLOR[s.state];
+    ctx.fillRect(a, 0, Math.max(1, b - a), 1);
+  });
+  ctx.globalAlpha = 1;
+}
 
 export interface MarkLayout {
   maxHz: number;
@@ -94,8 +155,6 @@ export function drawDetectionMarks(ctx: CanvasRenderingContext2D, w: number, h: 
     : spanColumns(m.spans, m.tNewest, w, m.secPerCol);
   for (const s of spans) {
     if (!m.lineOnly) {
-      ctx.fillStyle = SPAN_FILL;
-      ctx.fillRect(s.x0, 0, Math.max(1, s.x1 - s.x0), h);
       ctx.strokeStyle = SPAN_EDGE;
       for (const [on, x] of [[s.start, s.x0], [s.end, s.x1]] as const) {
         if (!on) continue;

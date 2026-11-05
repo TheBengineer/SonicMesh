@@ -863,6 +863,8 @@ export class LoRaNetwork {
       beaconHeard: node.beaconHeard,
       lastDetectionS: node.stub.lastDetectionS,
       detectSpans: node.stub.spans.map((s) => ({ ...s })),
+      marginDb: node.stub.marginDb,
+      detectState: node.stub.state,
       detections: node.stub.detections,
       queue: node.stub.queue,
       retries: node.stub.retries,

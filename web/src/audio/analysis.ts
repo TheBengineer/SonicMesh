@@ -2,7 +2,7 @@ import { bandLevelDb, fft, hann } from '../acoustics/dsp';
 import type { AudioRing } from '../acoustics/history';
 import { FS, N_HARM, REF_PA } from '../acoustics/model';
 import type { DetectSpan } from '../lora/types';
-import { drawDetectionMarks } from '../ui/detectMarks';
+import { drawDetectionMarks, drawLevelStrip, type LevelSample } from '../ui/detectMarks';
 import { BandTracer, MAX_TRACKS } from './bandTrace';
 
 // Spectrogram and band-level history for one mic, read from the sim's audio rings. Costs the sim nothing.
@@ -225,6 +225,13 @@ export class MicAnalysis {
       secPerCol: WF_HOP / FS,
       traces,
     });
+  }
+
+  // The detector's level and state along the bottom of the waterfall, lined up with its columns.
+  drawLevel(canvas: HTMLCanvasElement, samples: LevelSample[], nowS: number): void {
+    if (!this.ring || this.colCount === 0) return;
+    const centre = this.wfCursor - WF_HOP + WF_N / 2;
+    drawLevelStrip(canvas, samples, nowS - (this.ring.written - centre) / FS, WF_COLS, WF_HOP / FS);
   }
 
   drawWaterfall(canvas: HTMLCanvasElement, overlay: boolean): void {

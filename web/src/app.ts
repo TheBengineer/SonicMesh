@@ -24,7 +24,7 @@ import {
 } from './ui/inspector';
 import { renderAbout, renderIntro, renderLedger } from './ui/overlays';
 import { Popup } from './ui/popup';
-import { spanAt } from './ui/detectMarks';
+import { LevelHistory, spanAt } from './ui/detectMarks';
 import { WaterfallStrip, type StripNode } from './ui/waterfalls';
 import { Timeline, type TimelineInfo } from './ui/timeline';
 import { parseInputLog, type LogEntry } from './sim/inputs';
@@ -634,6 +634,8 @@ export function startApp(root: HTMLElement): void {
       analysis.update(ring, lines, nodeView?.detecting ?? false);
       analysis.drawWaterfall(wf, overlay && lines !== null);
       analysis.drawMarks(wf, nodeView?.detectSpans ?? [], f.simTimeS);
+      const strip = body.querySelector<HTMLCanvasElement>('canvas[data-plot="strip"]');
+      if (strip && nodeView) analysis.drawLevel(strip, levels.get(nodeView.id)?.samples ?? [], f.simTimeS);
       const level = body.querySelector<HTMLCanvasElement>('canvas[data-plot="level"]');
       if (level) {
         const band = analysis.bandDb();
@@ -677,6 +679,8 @@ export function startApp(root: HTMLElement): void {
       mic: micKeysOf(n)[0],
       detecting: f.lora?.nodes.find((v) => v.id === n.id)?.detecting ?? false,
       spans: f.lora?.nodes.find((v) => v.id === n.id)?.detectSpans ?? [],
+      marginDb: f.lora?.nodes.find((v) => v.id === n.id)?.marginDb ?? 0,
+      state: f.lora?.nodes.find((v) => v.id === n.id)?.detectState ?? 'quiet',
       listening: listenKey !== null && micKeysOf(n).includes(listenKey),
     }));
     strip.update(nodes, selection?.kind === 'node' ? selection.id : null, f.simTimeS, (key) => host.ring(key));
@@ -697,6 +701,19 @@ export function startApp(root: HTMLElement): void {
     syncInspect();
   }
 
+  // Each node's level, kept here so the strip has its history as soon as a node is opened.
+  const levels = new Map<number, LevelHistory>();
+  function recordLevels(f: Frame): void {
+    for (const n of f.lora?.nodes ?? []) {
+      let history = levels.get(n.id);
+      if (!history) {
+        history = new LevelHistory();
+        levels.set(n.id, history);
+      }
+      history.push({ t: f.simTimeS, marginDb: n.marginDb, state: n.detectState });
+    }
+  }
+
   let last = performance.now();
   let sinceRefresh = 0;
   let sinceStrip = 0;
@@ -705,6 +722,7 @@ export function startApp(root: HTMLElement): void {
     last = now;
     pollSticks();
     const f = frameNow();
+    recordLevels(f);
     view.sync(worldNow(), f.state, selection, f.lora, f.simTimeS);
     view.render();
     if (popup.isOpen) popup.update(selection ? view.screenPos(selection) : null);

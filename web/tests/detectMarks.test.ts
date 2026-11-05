@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { snippetSpectrogram, SNIP_FS } from '../src/audio/analysis';
-import { MAX_DETECT_SPANS, NodeStub } from '../src/lora/nodeStub';
-import { hzRow, spanAt, spanColumns } from '../src/ui/detectMarks';
+import { DETECTION_THRESHOLD_DB, MAX_DETECT_SPANS, NodeStub } from '../src/lora/nodeStub';
+import type { DetectState } from '../src/lora/types';
+import { hzRow, LevelHistory, METER_TICK, meterFraction, spanAt, spanColumns, type LevelSample } from '../src/ui/detectMarks';
 
 const SEC_PER_COL = 0.032;
 
@@ -99,5 +100,67 @@ describe('snippet clip spectrogram', () => {
 
   it('has no columns for a clip shorter than one window', () => {
     expect(snippetSpectrogram([1, 0, 1]).cols).toBe(0);
+  });
+});
+
+describe('the loudness meter', () => {
+  it('puts the threshold at the tick, stretching the low end', () => {
+    expect(meterFraction(DETECTION_THRESHOLD_DB)).toBeCloseTo(METER_TICK, 9);
+    expect(meterFraction(0)).toBe(0);
+    expect(meterFraction(-160)).toBe(0);
+    expect(meterFraction(1)).toBeCloseTo(METER_TICK / 2, 9);
+    expect(meterFraction(20)).toBe(1);
+    expect(meterFraction(60)).toBe(1);
+  });
+
+  it('follows the detector: quiet, then arming above the threshold, then detecting, then quiet', () => {
+    const stub = new NodeStub(1, 'detector', 7);
+    const feed = (t: number, bandDb: number): void => {
+      stub.update(t, { bandDb, ambientDb: 40 });
+    };
+    feed(0, 40);
+    expect(stub.state).toBe('quiet');
+    expect(stub.marginDb).toBe(0);
+    feed(1, 43);
+    expect(stub.state).toBe('arming');
+    expect(stub.marginDb).toBe(3);
+    feed(1.6, 43);
+    expect(stub.state).toBe('detecting');
+    feed(2, 40);
+    feed(2.6, 40);
+    expect(stub.state).toBe('quiet');
+  });
+
+  it('goes back to quiet when the level drops before the hold is over', () => {
+    const stub = new NodeStub(1, 'detector', 7);
+    stub.update(1, { bandDb: 43, ambientDb: 40 });
+    expect(stub.state).toBe('arming');
+    stub.update(1.2, { bandDb: 40, ambientDb: 40 });
+    expect(stub.state).toBe('quiet');
+  });
+});
+
+describe('level history', () => {
+  const sample = (t: number, state: DetectState = 'quiet'): LevelSample => ({ t, marginDb: 1, state });
+
+  it('keeps one sample per step, and does not lose a brief change of state', () => {
+    const h = new LevelHistory();
+    h.push(sample(1));
+    h.push(sample(1.05, 'arming'));
+    h.push(sample(1.2));
+    expect(h.samples.map((s) => [s.t, s.state])).toEqual([[1, 'arming'], [1.2, 'quiet']]);
+  });
+
+  it('stops growing at its cap', () => {
+    const h = new LevelHistory();
+    for (let i = 0; i < LevelHistory.MAX + 20; i++) h.push(sample(i));
+    expect(h.samples).toHaveLength(LevelHistory.MAX);
+  });
+
+  it('restarts when sim time goes back, as on a reset', () => {
+    const h = new LevelHistory();
+    h.push(sample(50));
+    h.push(sample(0));
+    expect(h.samples.map((s) => s.t)).toEqual([0]);
   });
 });

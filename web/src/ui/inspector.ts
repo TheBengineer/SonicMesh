@@ -467,10 +467,11 @@ function waterfallNode(ctx: InspectContext, n: NodeSpec): Panel {
       <div class="wf-frame">
         <canvas class="plot wf" data-plot="waterfall" width="300" height="512" aria-label="Mic spectrogram, 0 to 8 kHz"></canvas>
         ${listening ? `<span class="speaker" title="Listening to this mic">${SPEAKER_ICON}</span>` : ''}
+        <canvas class="level-strip" data-plot="strip" aria-label="Detector level and state over time"></canvas>
       </div>
       <div class="scale"><span>10 dB</span><span class="ramp"></span><span>90 dB</span></div>
       <p class="note">dB SPL per bin, as the line level of a sine in that bin. 1024-point Hann FFT, 50 % overlap, 0 to 8 kHz, newest on the right.</p>
-      <p class="note">Debug lines. Dashed: the 100 to 4000 Hz band the stub detector adds up; it does not pick a frequency. Blue: when it detected, from the start to the end of the detection. Green: one upper harmonic per drone it can pick out, traced from this audio while the node detects, so each line follows its band's Doppler shift and wobble. It is a display aid: detecting still comes from the band level, and a faint drone can show blue with no green.</p>
+      <p class="note">Debug lines. Dashed: the 100 to 4000 Hz band the stub detector adds up; it does not pick a frequency. The strip under the plot is its input, brighter when louder: grey below the threshold, amber while holding above it, red once detecting. Blue: the start and end of a detection. Green: one upper harmonic per drone it can pick out, traced from this audio while the node detects, so each line follows its band's Doppler shift and wobble. It is a display aid: detecting still comes from the band level, and a faint drone can show blue with no green.</p>
       <div class="actions"><button data-action="overlay" data-id="${n.id}" aria-pressed="${overlayOn}"${truthOn ? '' : ' disabled'}>Truth: blade-pass harmonics</button></div>
       <p class="note">${
         truthOn

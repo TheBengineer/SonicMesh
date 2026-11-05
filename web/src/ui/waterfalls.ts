@@ -1,7 +1,8 @@
 import { MicAnalysis, TILE_COLS, TILE_ROWS } from '../audio/analysis';
 import type { AudioRing } from '../acoustics/history';
-import type { DetectSpan } from '../lora/types';
+import type { DetectSpan, DetectState } from '../lora/types';
 import type { NodeKind } from '../sim/scenario';
+import { METER_TICK, meterFraction } from './detectMarks';
 import { esc, need, SPEAKER_ICON } from './dom';
 
 // Tiles are at least this wide on screen; the grid fits as many per row as the strip allows.
@@ -30,6 +31,8 @@ export interface StripNode {
   detecting: boolean;
   spans: DetectSpan[];
   listening: boolean;
+  marginDb: number;
+  state: DetectState;
 }
 
 interface Tile {
@@ -37,6 +40,8 @@ interface Tile {
   canvas: HTMLCanvasElement;
   level: HTMLElement;
   speaker: HTMLElement;
+  meter: HTMLElement;
+  fill: HTMLElement;
 }
 
 // One small scrolling waterfall per node, all fed from the audio rings. The strip owns only the analysis; it draws
@@ -60,7 +65,7 @@ export class WaterfallStrip {
         <div class="scale"><span>10 dB</span><span class="ramp"></span><span>90 dB</span></div>
       </div>
       <div class="wf-grid"></div>
-      <p class="note">One tile per node, first mic. The last 6 s, same FFT, dB scale and colours as the Waterfall tab. A red edge means the node is detecting. Dashed lines mark the 100 to 4000 Hz band the detector measures; blue marks when it detected, and each green line follows one harmonic of a drone in the audio. Click a tile to open that node.</p>`;
+      <p class="note">One tile per node, first mic. The last 6 s, same FFT, dB scale and colours as the Waterfall tab. The bar on the left edge is what the detector measures, the loudness of the 100 to 4000 Hz band (dashed lines) above the background, and its mark is the threshold. It is grey below the mark, amber while it holds above it, and red once detecting. Blue lines mark the start and end of a detection, and each green line follows one harmonic of a drone in the audio. Click a tile to open that node.</p>`;
     this.grid = need<HTMLElement>(root, '.wf-grid');
     new ResizeObserver(() => this.layout()).observe(this.grid);
   }
@@ -76,6 +81,8 @@ export class WaterfallStrip {
       tile.button.classList.toggle('detecting', n.detecting);
       tile.button.setAttribute('aria-pressed', String(selected === n.id));
       tile.speaker.hidden = !n.listening;
+      tile.meter.dataset.state = n.state;
+      tile.fill.style.height = `${(meterFraction(n.marginDb) * 100).toFixed(1)}%`;
       const ring = ringFor(n.mic);
       if (!ring) {
         tile.level.textContent = 'no audio';
@@ -108,7 +115,7 @@ export class WaterfallStrip {
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'wf-tile';
-      button.innerHTML = `<span class="wf-name">Node ${n.id}, ${esc(n.kind)}</span><canvas width="${TILE_COLS}" height="${TILE_ROWS}" aria-label="Node ${n.id} waterfall"></canvas><span class="wf-level"></span><span class="speaker" title="Listening to this node" hidden>${SPEAKER_ICON}</span>`;
+      button.innerHTML = `<span class="wf-name">Node ${n.id}, ${esc(n.kind)}</span><canvas width="${TILE_COLS}" height="${TILE_ROWS}" aria-label="Node ${n.id} waterfall"></canvas><span class="wf-level"></span><span class="speaker" title="Listening to this node" hidden>${SPEAKER_ICON}</span><span class="wf-meter" title="Band level above the ambient, with the detection threshold marked"><span class="fill"></span><span class="tick" style="bottom:${METER_TICK * 100}%"></span></span>`;
       button.addEventListener('click', () => this.onSelect(n.id));
       this.grid.append(button);
       this.tiles.set(n.id, {
@@ -116,6 +123,8 @@ export class WaterfallStrip {
         canvas: need<HTMLCanvasElement>(button, 'canvas'),
         level: need<HTMLElement>(button, '.wf-level'),
         speaker: need<HTMLElement>(button, '.speaker'),
+        meter: need<HTMLElement>(button, '.wf-meter'),
+        fill: need<HTMLElement>(button, '.fill'),
       });
     }
     this.count = nodes.length;

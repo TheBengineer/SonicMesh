@@ -70,6 +70,9 @@ export interface DetectSpan {
   lineHz: number | null;
 }
 
+// What the detector is doing: below the threshold, above it but still holding, or detecting.
+export type DetectState = 'quiet' | 'arming' | 'detecting';
+
 export interface NodeView {
   id: number;
   kind: 'detector' | 'array';
@@ -79,6 +82,9 @@ export interface NodeView {
   beaconHeard: boolean;
   lastDetectionS: number;
   detectSpans: DetectSpan[];
+  // The detector's input: the band level above the ambient.
+  marginDb: number;
+  detectState: DetectState;
   detections: number;
   queue: number;
   retries: number;

@@ -4,7 +4,7 @@ import { createRng, nextFloat, nextU32, type Rng } from '../sim/rng';
 import type { DroneClass } from '../sim/scenario';
 import { gauss } from '../acoustics/dsp';
 import { HEALTH_FIELDS } from '../protocol/messages';
-import type { DetectSpan } from './types';
+import type { DetectSpan, DetectState } from './types';
 
 // Above the demo background, whose 100 ms band level peaked 1.4 dB over the ambient in 600 s across 13 nodes. That
 // background is steady noise only: no wind or sound events, so a real site would need a higher threshold.
@@ -143,6 +143,7 @@ export class NodeStub {
   lastDetectionS = -1;
   readonly spans: DetectSpan[] = [];
   lastBandDb = 0;
+  marginDb = 0;
   minBandDb = 255;
 
   constructor(
@@ -158,6 +159,7 @@ export class NodeStub {
     this.lastBandDb = obs.bandDb;
     this.minBandDb = Math.min(this.minBandDb, obs.bandDb);
     const margin = obs.bandDb - obs.ambientDb;
+    this.marginDb = margin;
     if (this.latched) {
       // A detection ends only after the level stays low, so a level near the threshold does not flicker.
       if (margin >= DETECTION_RELEASE_DB) {
@@ -187,6 +189,11 @@ export class NodeStub {
       this.aboveSince = -1;
     }
     return this.detecting && this.lastDetectionS === t ? null : null;
+  }
+
+  get state(): DetectState {
+    if (this.detecting) return 'detecting';
+    return this.aboveSince >= 0 ? 'arming' : 'quiet';
   }
 
   // Detection fields from truth with noise. Array nodes get a bearing; detector nodes report 0.
