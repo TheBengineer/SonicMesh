@@ -27,6 +27,7 @@ const ICON_SCALE = 3;
 const SELECTED_SCALE = 10;
 const RING_SELECTED = 0xffe066;
 const RING_COLOR = { detector: 0x4aa3ff, array: 0xff9f43, gateway: 0x3ddc84, drone: 0xff4d6d } as const;
+const DETECT_LINE = 0x5fb4ff; // --accent in style.css
 
 function isSelected(selection: Selection, kind: 'node' | 'drone' | 'gateway', id = 0): boolean {
   if (!selection) return false;
@@ -259,6 +260,7 @@ export class WorldView {
   private readonly nodeGroup = new THREE.Group();
   private readonly droneGroup = new THREE.Group();
   private readonly packetGroup = new THREE.Group();
+  private readonly detectGroup = new THREE.Group();
   private readonly gateway = buildGateway();
   private map: HTMLCanvasElement | null = null;
   private mapCtx: CanvasRenderingContext2D | null = null;
@@ -284,7 +286,7 @@ export class WorldView {
     const sun = new THREE.DirectionalLight(0xffffff, 1.2);
     sun.position.set(-1500, 2500, 1000);
     this.scene.add(new THREE.HemisphereLight(0xffffff, 0x4d6035, 1.8), sun);
-    this.scene.add(this.staticGroup, this.nodeGroup, this.droneGroup, this.packetGroup, this.gateway);
+    this.scene.add(this.staticGroup, this.nodeGroup, this.droneGroup, this.packetGroup, this.detectGroup, this.gateway);
     this.scene.add(this.ringGroup);
     if (!renderer || !controls) {
       const note = document.createElement('div');
@@ -434,6 +436,23 @@ export class WorldView {
 
     this.updateRings(world, state, selection);
     this.updatePackets(world, state, lora, nowS);
+    this.updateDetections(world, state, lora);
+  }
+
+  // A straight line from each detecting node to the drone it detects.
+  private updateDetections(world: World, state: WorldState, lora: LoraView | null): void {
+    disposeGroup(this.detectGroup);
+    this.detectGroup.clear();
+    if (!lora) return;
+    for (const v of lora.nodes) {
+      const d = state.drones.find((o) => o.id === v.targetId);
+      if (!d) continue;
+      const geo = new THREE.BufferGeometry().setFromPoints([
+        this.packetPos(v.id, state, world.terrain),
+        toScene(d.x, d.y, d.alt),
+      ]);
+      this.detectGroup.add(new THREE.Line(geo, new THREE.LineBasicMaterial({ color: DETECT_LINE })));
+    }
   }
 
   // One ground ring per object, always shown; the selected object's ring is larger and yellow.
@@ -577,6 +596,18 @@ export class WorldView {
         }
       }
       ctx.globalAlpha = 1;
+
+      ctx.strokeStyle = `#${DETECT_LINE.toString(16)}`;
+      ctx.lineWidth = 2;
+      for (const v of lora.nodes) {
+        const n = state.nodes.find((o) => o.id === v.id);
+        const d = state.drones.find((o) => o.id === v.targetId);
+        if (!n || !d) continue;
+        ctx.beginPath();
+        ctx.moveTo(sx(n.x), sy(n.y));
+        ctx.lineTo(sx(d.x), sy(d.y));
+        ctx.stroke();
+      }
     }
 
     // Every marker is ICON_SCALE x its old size with a ring around it; the selected one is SELECTED_SCALE x.
@@ -624,7 +655,7 @@ export class WorldView {
     const mode = lora ? `LoRa ${lora.mode} mode, superframe ${lora.superframe}` : 'LoRa starting';
     ctx.fillText(mode, m, h - 10);
     ctx.fillStyle = '#8a98a8';
-    ctx.fillText('lines: green decoded, amber collision, red range, purple half-duplex', m, h - 26);
+    ctx.fillText('lines: green decoded, amber collision, red range, purple half-duplex, blue node detects drone', m, h - 26);
   }
 
   // Where an object sits in sim coordinates, or null if it is gone.

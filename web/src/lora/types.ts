@@ -67,6 +67,8 @@ export interface NodeView {
   id: number;
   kind: 'detector' | 'array';
   detecting: boolean;
+  // The drone this detection belongs to. The stub takes the nearest drone from truth.
+  targetId: number | null;
   beaconHeard: boolean;
   lastDetectionS: number;
   detections: number;

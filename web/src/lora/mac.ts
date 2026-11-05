@@ -348,7 +348,7 @@ export class LoRaNetwork {
     return this.nodes.find((n) => n.spec.id === id);
   }
 
-  private detectionFor(node: NetNode): Detection {
+  private nearestTruth(node: NetNode): TruthTarget | null {
     let best: TruthTarget | null = null;
     let bestD = Infinity;
     for (const t of this.truth) {
@@ -358,8 +358,12 @@ export class LoRaNetwork {
         best = t;
       }
     }
+    return best;
+  }
+
+  private detectionFor(node: NetNode): Detection {
     const target: TruthTarget =
-      best ??
+      this.nearestTruth(node) ??
       ({
         id: 0,
         class: 'mini' as DroneClass,
@@ -843,6 +847,7 @@ export class LoRaNetwork {
       id: node.spec.id,
       kind: node.spec.kind,
       detecting: node.stub.detecting,
+      targetId: node.stub.detecting ? (this.nearestTruth(node)?.id ?? null) : null,
       beaconHeard: node.beaconHeard,
       lastDetectionS: node.stub.lastDetectionS,
       detections: node.stub.detections,

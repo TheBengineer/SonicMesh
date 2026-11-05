@@ -53,6 +53,25 @@ describe('LoRa MAC and schedule', () => {
     expect(view.packets.some((p) => p.type === 'RANGING_RESULT')).toBe(true);
   });
 
+  it('a detecting node names its nearest drone, and no drone once it stops detecting', () => {
+    const net = network(scenario.nodes);
+    const node = scenario.nodes.find((n) => n.id === 6)!;
+    net.setTruth([
+      { id: 1, class: 'mini', x: node.x + 2000, y: node.y, alt: 40 },
+      { id: 2, class: 'mini', x: node.x + 50, y: node.y, alt: 40 },
+    ]);
+    const view = (): { detecting: boolean; targetId: number | null } => net.snapshot().nodes.find((v) => v.id === 6)!;
+    expect(view().targetId).toBeNull();
+    let seen: number | null = null;
+    runSeconds(net, 20, (n, t) => {
+      n.observe(6, { bandDb: t <= 5 ? 72 : 40, ambientDb: 40 });
+      if (view().detecting) seen = view().targetId;
+    });
+    expect(seen).toBe(2);
+    expect(view().detecting).toBe(false);
+    expect(view().targetId).toBeNull();
+  });
+
   it('a detection switches to event, pauses health and ranging, and returns to idle after 10 s', () => {
     const net = network(scenario.nodes);
     const start = 2;
@@ -93,6 +112,8 @@ describe('LoRa MAC and schedule', () => {
     engine.start(runner.world);
     let maxBand = -120;
     let ambient = 0;
+    const droneId = runner.world.state.drones[0].id;
+    let linked = 0;
     // the drone passes node 7 at about 54 s; run to 90 s, past the end of the event
     for (let i = 0; i < 9000; i++) {
       runner.stepTick();
@@ -100,7 +121,14 @@ describe('LoRa MAC and schedule', () => {
       runner.lora.observeFromEngine(runner.world, engine);
       maxBand = Math.max(maxBand, engine.bandLevel('7.0'));
       ambient = engine.ambientDb();
+      if (i % 50 === 0) {
+        for (const n of runner.lora.snapshot().nodes) {
+          expect(n.targetId).toBe(n.detecting ? droneId : null);
+          if (n.detecting) linked++;
+        }
+      }
     }
+    expect(linked, 'a node was linked to the drone').toBeGreaterThan(0);
     const view = runner.lora.snapshot();
     const types = new Set(view.packets.map((p) => p.type));
     for (const type of ['BEACON', 'RANGING_RESULT', 'DETECT_START', 'DETECT', 'SNIPPET']) {

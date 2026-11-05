@@ -528,10 +528,9 @@ h3 {
 }
 
 .popup-tail polygon {
-  fill: var(--accent);
-  fill-opacity: 0.4;
-  stroke: var(--accent);
-  stroke-opacity: 0.8;
+  fill: var(--panel);
+  fill-opacity: 0.92;
+  stroke: var(--line);
   stroke-width: 1;
 }
 
