@@ -52,15 +52,6 @@ components:
     evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/PLAN.md"
     upgrade: "STUB to SAME CODE in M4: the gateway fusion code, run in Pyodide."
 
-  - id: radar
-    name: Radar dome
-    tag: STUB
-    milestone: M0
-    summary: "Wireframe coverage dome with a low-elevation floor. No detections, tracks or cues yet."
-    evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/docs/web-demo-plan.md"
-    upgrade: "STUB to REAL once a radar and its interface are chosen."
-    bias: "The dome is an idealised hemisphere with a fixed 3 degree floor."
-
   - id: drone-dynamics
     name: Drone flight dynamics
     tag: MODELLED

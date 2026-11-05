@@ -541,23 +541,6 @@ function gatewayTab(ctx: InspectContext): Panel {
   };
 }
 
-function radarTab(ctx: InspectContext): Panel {
-  const { ledger } = ctx;
-  return {
-    key: 'radar',
-    html: `
-      <h2>Radar</h2>
-      <div class="badges">${badgeHtml(ledger.byId.get(COMPONENT.radar))}</div>
-      ${rows([
-        ['Coverage', '1500 m hemisphere'],
-        ['Low-elevation floor', 'below 3 degrees'],
-      ])}
-      <p class="note">Coverage only. Detections, tracks and cues come in M4.</p>
-    `,
-    live: {},
-  };
-}
-
 function sceneTab(ctx: InspectContext): Panel {
   const { world, ledger } = ctx;
   const s = world.state;
@@ -578,7 +561,7 @@ function sceneTab(ctx: InspectContext): Panel {
         ['Truth overlay', s.truth ? 'on' : 'off'],
         ['Sim time', live('s-time')],
       ])}
-      <p class="note">Click a node, drone, the gateway or the radar to inspect it. Drag nodes and the gateway on the ground. Click the ground to add when a + button is active.</p>
+      <p class="note">Click a node, drone, or the gateway to inspect it. Drag nodes and the gateway on the ground. Click the ground to add when a + button is active.</p>
     `,
     live: { 's-time': `${fmt(s.tick * 0.01, 2)} s, tick ${s.tick}` },
   };
@@ -596,7 +579,6 @@ function detailsPanel(ctx: InspectContext): Panel {
     if (d) return droneTab(ctx, d);
   }
   if (sel?.kind === 'gateway') return gatewayTab(ctx);
-  if (sel?.kind === 'radar') return radarTab(ctx);
   return sceneTab(ctx);
 }
 

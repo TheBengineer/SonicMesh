@@ -16,7 +16,7 @@ export function renderAbout(dialog: HTMLDialogElement): void {
     <h2>About SonicMesh</h2>
     <p>
       SonicMesh is a loose perimeter of low-cost microcontroller acoustic nodes. They detect small drones
-      crossing at low altitude, where radar struggles with clutter. Radar covers high and distant targets.
+      crossing at low altitude, and tell you where along the line, which way and when.
     </p>
     <p>
       This demo simulates the whole perimeter in the browser: terrain, trees, a drone you can fly, nodes you

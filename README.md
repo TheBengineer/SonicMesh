@@ -1,7 +1,7 @@
 # SonicMesh
 
 A loose perimeter of low-cost microcontroller acoustic nodes that detects small drones crossing at low altitude.
-It complements radar: acoustic covers the low, close-in airspace where radar struggles with clutter, and radar covers high and distant targets.
+It works as a tripwire: for each crossing it says where along the line, which way and when.
 
 **Nodes:**
 - **Detector (~$20–35, ~2 mA):** nRF52840/nRF54L15, one PDM mic, LoRa radio with ranging (LR2021), accelerometer. No GNSS.
@@ -9,11 +9,11 @@ It complements radar: acoustic covers the low, close-in airspace where radar str
 
 - **Acoustic** detection on the node: an FFT harmonic detector, then a small CNN that rejects other noise sources.
 - **Remote ID** scanning (BLE/Wi-Fi). Receive-only, apart from LoRa.
-- Compact detection messages sent over a **LoRa mesh**, with synced timestamps.
+- **Network:** local clusters of nodes on LoRa, with synced timestamps, joined by a backbone mesh between controllers so the line can cross terrain. Only summaries cross the backbone. Neighbouring nodes also hear each other directly, for faster fixes.
 - **Placement:** the installer's phone plays its GPS fix to the node as sound. Periodic LoRa ranging between neighbours checks that nodes haven't moved.
 - **Health:** a 23-byte report on every 5-minute heartbeat (battery, mic, tamper, link, clock), paused during drone events.
 
-**Gateway:** Raspberry Pi. It combines detections from many nodes using bearing intersection and time-difference-of-arrival (TDOA) localization, tracks targets with a Kalman filter, and shows them on a map UI.
+**Controller (gateway):** Raspberry Pi, one per cluster. It combines detections from its nodes using bearing intersection and time-difference-of-arrival (TDOA) localization, tracks targets with a Kalman filter, and shows them on a map UI.
 
 ## Status
 

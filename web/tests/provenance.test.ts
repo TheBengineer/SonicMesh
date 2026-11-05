@@ -47,16 +47,14 @@ describe('provenance ledger', () => {
       'provisioning-modem',
       'provisioning-channel',
       'mcu-load',
-      'radar',
     ]) {
       expect(ledger.byId.has(id), id).toBe(true);
     }
   });
 
-  it('M0 scene components are tagged STUB for acoustics, drone dynamics MODELLED, radar STUB', () => {
+  it('M0 scene components are tagged STUB for acoustics, drone dynamics MODELLED', () => {
     expect(ledger.byId.get('terrain')?.tag).toBe('STUB');
     expect(ledger.byId.get('trees')?.tag).toBe('STUB');
-    expect(ledger.byId.get('radar')?.tag).toBe('STUB');
     expect(ledger.byId.get('drone-dynamics')?.tag).toBe('MODELLED');
   });
 

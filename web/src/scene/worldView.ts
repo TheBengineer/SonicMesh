@@ -29,7 +29,7 @@ const RING_COLOR = { detector: 0x4aa3ff, array: 0xff9f43, gateway: 0x3ddc84, dro
 
 function isSelected(selection: Selection, kind: 'node' | 'drone' | 'gateway', id = 0): boolean {
   if (!selection) return false;
-  if (kind === 'gateway') return selection.kind === 'gateway' || selection.kind === 'radar';
+  if (kind === 'gateway') return selection.kind === 'gateway';
   return selection.kind === kind && selection.id === id;
 }
 
@@ -52,8 +52,6 @@ export interface Hit {
   y: number;
 }
 
-const RADAR_RANGE_M = 1500;
-const RADAR_FLOOR_DEG = 3;
 const SKY = 0xaed0e0;
 
 // Sim (x east, y north, h up) to three.js (y up, north is -z).
@@ -223,24 +221,6 @@ function buildDrone(id: number, cls: DroneClass): { obj: THREE.Group; tether: TH
   return { obj: g, tether };
 }
 
-// Radar stub: dome plus a floor disc at the low-elevation cut-off.
-function buildRadar(): THREE.Group {
-  const g = new THREE.Group();
-  const dome = new THREE.Mesh(
-    new THREE.SphereGeometry(RADAR_RANGE_M, 40, 20, 0, Math.PI * 2, 0, Math.PI / 2),
-    new THREE.MeshBasicMaterial({ color: 0x5fd4ff, wireframe: true, transparent: true, opacity: 0.25, depthWrite: false }),
-  );
-  const rad = (RADAR_FLOOR_DEG * Math.PI) / 180;
-  const floor = new THREE.Mesh(
-    new THREE.CircleGeometry(RADAR_RANGE_M * Math.cos(rad), 64),
-    new THREE.MeshBasicMaterial({ color: 0xe0605a, transparent: true, opacity: 0.16, side: THREE.DoubleSide, depthWrite: false }),
-  );
-  floor.rotation.x = -Math.PI / 2;
-  floor.position.y = RADAR_RANGE_M * Math.sin(rad);
-  g.add(dome, floor);
-  return g;
-}
-
 // Null when the browser has no WebGL. The app then runs without the 3D view.
 function createRenderer(): THREE.WebGLRenderer | null {
   try {
@@ -272,7 +252,6 @@ export class WorldView {
   private readonly droneGroup = new THREE.Group();
   private readonly packetGroup = new THREE.Group();
   private readonly gateway = buildGateway();
-  private readonly radar = buildRadar();
   private map: HTMLCanvasElement | null = null;
   private mapCtx: CanvasRenderingContext2D | null = null;
   private readonly ringGroup = new THREE.Group();
@@ -295,7 +274,7 @@ export class WorldView {
     const sun = new THREE.DirectionalLight(0xffffff, 1.2);
     sun.position.set(-1500, 2500, 1000);
     this.scene.add(new THREE.HemisphereLight(0xffffff, 0x4d6035, 1.8), sun);
-    this.scene.add(this.staticGroup, this.nodeGroup, this.droneGroup, this.packetGroup, this.gateway, this.radar);
+    this.scene.add(this.staticGroup, this.nodeGroup, this.droneGroup, this.packetGroup, this.gateway);
     this.scene.add(this.ringGroup);
     if (!renderer || !controls) {
       const note = document.createElement('div');
@@ -441,7 +420,6 @@ export class WorldView {
 
     this.gateway.position.copy(toScene(state.gateway.x, state.gateway.y, terrain.height(state.gateway.x, state.gateway.y)));
     this.gateway.scale.setScalar(isSelected(selection, 'gateway') ? SELECTED_SCALE : ICON_SCALE);
-    this.radar.position.copy(this.gateway.position);
 
     this.updateRings(world, state, selection);
     this.updatePackets(world, state, lora, nowS);

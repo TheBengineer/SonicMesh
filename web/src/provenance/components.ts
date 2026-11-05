@@ -6,7 +6,6 @@ export const COMPONENT = {
   nodeDetector: 'node-detector',
   nodeArray: 'node-array',
   gateway: 'gateway',
-  radar: 'radar',
   droneDynamics: 'drone-dynamics',
   dronePaths: 'drone-scripted-paths',
   droneClasses: 'drone-classes',

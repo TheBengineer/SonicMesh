@@ -1,12 +1,11 @@
 # SonicMesh — Prototyping Plan
 
 **Goal:** a loose perimeter of cheap, microcontroller-based acoustic sensor nodes that detects
-small drones (Group 1 UAS, < 25 kg) crossing it at low altitude. It works alongside a radar system
-that covers high and distant targets.
+small drones (Group 1 UAS, < 25 kg) crossing it at low altitude. Scope is the perimeter alone; radar
+and other outside sensors are off the table for now, in the simulation and the hardware.
 
 The perimeter is a tripwire. For each crossing it answers *did something cross, where along the
-line, which way, and when*, then cues radar or a camera to take over. Precise localisation is a
-bonus, not the core requirement.
+line, which way, and when*. Precise localisation is a bonus, not the core requirement.
 
 Research so far, which this plan builds on:
 - [01: TDOA, processing, boards, emulation](docs/research/01-tdoa-processing-hardware.md)
@@ -20,17 +19,19 @@ Design: [message format and schedule v0](docs/protocol-v0.md).
 
 ---
 
-## 1. Concept: acoustic below, radar above
+## 1. Concept: a tripwire that crosses terrain
 
-| | Acoustic perimeter (this project) | Radar |
-|---|---|---|
-| Strong at | Low, slow, terrain-hugging drones close to the line, including RF-silent ones | High and distant targets, wide-area tracking |
-| Weak at | Range (a few hundred m per node), wind, high-altitude targets | Ground clutter, multipath, terrain masking, birds near the ground |
-| Output | Crossing alerts: segment, time, direction, class, confidence | Tracks |
+- **Strong at:** low, slow, terrain-hugging drones close to the line, including RF-silent ones.
+- **Weak at:** range (a few hundred m per node), wind, high-altitude targets.
+- **Output:** crossing alerts with segment, time, direction, class and confidence.
 
-**Fusion.** Acoustic alerts cue the radar (or a PTZ camera) to the right sector at low elevation.
-Radar tracks heading toward the perimeter raise node sensitivity in that segment. One shared track
-picture lives at the gateway.
+**Network.** Backbone + local mesh clusters ([protocol](docs/protocol-v0.md), sections 3a–3b).
+Controllers link in a mesh, so the line can cross ridges and rivers. Each controller runs a LoRa
+cluster of nodes, and only summaries cross the backbone. Neighbouring nodes hear each other
+directly, for faster confirmation and fixes in the first seconds, at cluster boundaries and behind
+terrain.
+
+---
 
 ## 2. What the research established
 
@@ -100,7 +101,7 @@ picture lives at the gateway.
 4. Bearing (GCC-PHAT) on array nodes.
 5. Only a detection with ≥ 2 nodes agreeing, or a sustained single-node track, raises a crossing alert.
 
-**Mesh and messages.**
+**Network and messages.**
 - *Idle:* a robust LoRa setting (SF9/125 kHz) with a 5-minute heartbeat. Each heartbeat is a 23 B
   health report: battery and solar, temperature, resets, mic noise floor and self-test, wind
   level, detection counts, tilt and tamper flags, beacon link quality, clock offset, GNSS lock,
@@ -114,15 +115,15 @@ picture lives at the gateway.
 - *Optional burst layer:* the gateway requests aligned 1-bit audio clips from the 2–4 best nodes
   for precise TDOA/FDOA.
 
-**Gateway.**
-- Raspberry Pi with a LoRa radio.
-- Fuses nodes into crossing events and tracks.
+**Controller (gateway), one per cluster.**
+- Raspberry Pi with a LoRa radio and a backbone link to neighbouring controllers.
+- Fuses its nodes into crossing events and tracks, and hands tracks to the next cluster.
 - Health monitoring:
-  - 3 missed heartbeats outside an event → segment-gap alert, and radar watches that sector.
+  - 3 missed heartbeats outside an event → segment-gap alert.
   - A live coverage map from each node's noise floor (+6 dB ambient ≈ half the detection radius).
-    Thin segments go to the radar as watch sectors.
+    Thin segments show on the operator's view.
   - Battery forecasts, mic faults, tamper and ranging-integrity alerts.
-- Exposes an interface for the radar/C2 system: alerts out, cues in.
+- Exposes an operator interface: alerts, tracks, coverage and gaps.
 - Logs everything for replay.
 
 ## 4. Phased plan
@@ -169,9 +170,9 @@ See [docs/web-demo-plan.md](docs/web-demo-plan.md).
   array processing, or the role of each node type.
 
 ### Phase 4: Perimeter pilot (3–4 weeks)
-- 6–10 nodes on a 1–2 km line, with LoRa TDMA and the gateway.
+- 6–10 nodes on a 1–2 km line in two clusters, with LoRa TDMA, node-to-node and a backbone link.
 - Scripted crossings at different speeds, altitudes and directions.
-- Define and stub the radar/C2 interface.
+- Define the operator interface.
 - **Exit:**
   - ≥ 95% of crossings below 100 m detected.
   - Correct segment and direction ≥ 90%.
@@ -182,7 +183,6 @@ See [docs/web-demo-plan.md](docs/web-demo-plan.md).
     15 min (moved: at the next sweep).
 
 ### Phase 5: Integration and hardening (ongoing)
-- Radar cueing both ways.
 - Optional TDOA burst layer where precision helps.
 - Wake-on-sound low-power stage.
 - Over-the-air updates when serviced.
@@ -192,17 +192,18 @@ See [docs/web-demo-plan.md](docs/web-demo-plan.md).
 
 | Risk | Mitigation |
 |---|---|
-| Wind noise limits range | Wind-screen R&D in Phase 3. Raise thresholds adaptively when the node's anemometer or self-noise rises. Lean on radar in high wind. |
-| False alarms from look-alike sounds | Require ≥ 2-node agreement. Hard-negative mining from field logs. Cross-check with radar. |
+| Wind noise limits range | Wind-screen R&D in Phase 3. Raise thresholds adaptively when the node's anemometer or self-noise rises. Report reduced coverage in high wind. |
+| False alarms from look-alike sounds | Require ≥ 2-node agreement. Hard-negative mining from field logs. Neighbouring nodes confirm each other. |
 | Quiet or large stabilised drones (least wobble, low tones) | Adaptive bands down to ~80 Hz. Treat them as the design worst case in simulation. |
-| Gaps in the line (node failure, terrain, noise) | Spacing margin, health heartbeat, live coverage map that cues radar to thin segments, optional second row. |
+| Gaps in the line (node failure, terrain, noise) | Spacing margin, health heartbeat, live coverage map, optional second row. |
 | Node moved, swapped or impersonated | Accelerometer tamper flag, periodic ranging integrity check, authenticated messages. |
 | LoRa congestion during events | TDMA, aggregate messages per track, optional burst layer only on request. |
+| Backbone or controller loss splits the line | Clusters keep working alone and buffer alerts; node-to-node still runs. Adoption by a neighbouring controller is an open question. |
 | Regulatory | Receive-only RF. LoRa within regional duty and dwell rules. Legal test flights. No raw audio stored or sent outside R&D. |
 
 ## 6. Open questions
 
-1. **Radar:** which system, its low-altitude floor and coverage, and its interface (alerts, cues, track format)?
+1. **Backbone bearer:** LoRa on its own channel with raised antennas, Wi-Fi HaLow or point-to-point links?
 2. **Perimeter:** length, terrain, and how dense the background noise is (rural or urban)?
 3. **Target classes:** consumer camera drones, FPV, larger fixed-wing? This drives the bands and the training data.
 4. **Region:** EU868 or US915? [Protocol v0](docs/protocol-v0.md) targets US915: EU868's 1% duty cycle rules out the 500 kHz event layer as designed, so an EU build needs its own plan.

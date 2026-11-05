@@ -3,7 +3,7 @@
 Date: 2026-11-04
 
 **Goal:** a browser simulation of the whole perimeter. A drone you fly, nodes you place, trees and
-terrain, and every step from sound in the air to an alert at the radar shown on screen.
+terrain, and every step from sound in the air to an alert for the operator shown on screen.
 
 **Principle 1: faithful where it can be.** Where the real system will run code, the demo runs
 *that code*. Where physics is involved, it uses the same models as the Python simulation and is
@@ -20,7 +20,7 @@ running shipped code, modelled, assumed or a stub. Simplifications are listed, n
 ┌──────────────────────────────────────────────┬───────────────────────────────┐
 │ 3D world                                     │ Inspector (whatever you       │
 │  terrain, trees, road, nodes, gateway,       │ clicked)                      │
-│  radar dome, drone(s), LoRa packets as arcs, │  node 7 ▸ mic 2 waterfall     │
+│  clusters, drone(s), LoRa packets as arcs,   │  node 7 ▸ mic 2 waterfall     │
 │  bearing rays, TDOA hyperbolas,              │  ▸ characteristics ▸ messages │
 │  track vs truth                              │  ▸ health ▸ ranging ▸ state   │
 │                                              │                               │
@@ -51,9 +51,8 @@ running shipped code, modelled, assumed or a stub. Simplifications are listed, n
 | **Node** | <ul><li>Per-mic scrolling waterfall (spectrogram) with overlays: detected harmonic comb, tracked harmonic lines (the "characteristics"), and the true blade-pass frequencies dotted when truth is on.</li><li>Detector score and CNN class probabilities over time.</li><li>Band level vs noise floor.</li><li>Array nodes: bearing map (SRP-PHAT polar plot) and chosen bearing.</li><li>The 1-bit 4 kS/s clip buffer.</li><li>Firmware state machine: provisioning → idle → event → burst.</li><li>Every message sent and received.</li><li>Health report fields, ranging results to each neighbour, and battery/energy.</li><li>Modelled MCU load and RAM, from doc 04's figures.</li></ul> |
 | **LoRa packet** (arc, or a slot on the timeline) | <ul><li>Raw bytes in hex, with each decoded field.</li><li>Type, SF/BW, airtime and TDMA slot.</li><li>RSSI/SNR at every receiver; who decoded it, who lost it (collision, range), and the relay hops.</li></ul> |
 | **Timeline** | TDMA slot chart, channel utilisation, duty cycle per node, SF switches at event start/end. |
-| **Gateway** | <ul><li>Crossing events and their evidence.</li><li>Bearing intersections.</li><li>TDOA bursts: GCC-PHAT correlation surfaces with the drift (FDOA) search, chosen peak, residuals.</li><li>Hyperbolas on the map.</li><li>Track vs truth error.</li><li>Health dashboard and live coverage map.</li><li>The alert/cue messages exactly as sent to the radar/C2 interface.</li></ul> |
+| **Gateway** | <ul><li>Crossing events and their evidence.</li><li>Bearing intersections.</li><li>TDOA bursts: GCC-PHAT correlation surfaces with the drift (FDOA) search, chosen peak, residuals.</li><li>Hyperbolas on the map.</li><li>Track vs truth error.</li><li>Health dashboard and live coverage map.</li><li>The alert messages exactly as sent to the operator interface.</li></ul> |
 | **Drone** | True position, velocity, four rotor speeds with their wobble, the emitted spectrum, and Remote ID broadcasts (if enabled). |
-| **Radar** | Coverage dome with its low-elevation floor; simple simulated tracks; cues in and out. |
 | **Any sound source** | Its recording or model, level, and position. |
 
 ## 2. Showing what's real: the provenance ledger
@@ -67,7 +66,7 @@ Every component gets one tag. A single file, `web/provenance.yaml`, holds them. 
 | **SAME CODE** | The code that runs on the node or gateway, unmodified | Node detector core (C → WASM), message encoders, provisioning modem, gateway fusion |
 | **MODELLED** | Standard physics, checked against the Python sim and, where possible, real data | Propagation delay and Doppler, spreading, ground bounce, air absorption, LoRa airtime |
 | **ASSUMED** | A parameter not measured yet | Detection range, LoRa path-loss exponent, ranging error, MCU timing, current draw |
-| **STUB** | A placeholder standing in for a real system | Radar, foliage acoustics, RF terrain shadowing |
+| **STUB** | A placeholder standing in for a real system | Foliage acoustics |
 
 **What each entry records:**
 - the evidence: a link to a research doc or experiment;
@@ -85,7 +84,7 @@ main thread            sim worker                 node worker(s)          gatewa
 three.js scene   ◀──   world clock (fixed 10 ms)  node core (WASM,  ──▶   fusion (Pyodide,
 inspector panels       drone dynamics + sound      same C as firmware)     same Python as
 waterfalls (WebGL)     propagation → per-mic       one instance/node       the Pi gateway)
-timeline               audio blocks          ──▶   HAL: audio in,          alerts → radar stub
+timeline               audio blocks          ──▶   HAL: audio in,          alerts → operator  
 AudioWorklet (listen)  LoRa channel + TDMA   ◀──   LoRa out, clock,
                        ranging, energy             accelerometer
 ```
@@ -146,7 +145,6 @@ host.
 | Health | Real report encoder; battery/solar/temperature from a simple energy model | SAME CODE + ASSUMED | |
 | Provisioning | Real modem and latch on simulated phone audio (doc 05 channel) | SAME CODE + MODELLED | |
 | MCU load, power | Doc 04 per-stage costs | ASSUMED | Browser timing ≠ MCU timing; HIL mode (below) makes it REAL |
-| Radar | Coverage dome, low-elevation floor, detection probability vs range, track noise | STUB | Until a radar and its interface are chosen |
 
 ## 5. Getting real parts into the demo
 
@@ -174,7 +172,8 @@ anyway.
 | **M1** | Acoustic engine (WASM): sources, propagation, background, per-mic audio, listen mode, node waterfalls | 2 wk | Golden test: per-mic audio matches the Python sim to < 0.5 dB band level and < 20 µs delay |
 | **M2** | Node core in C, built to WASM: detector, harmonic lines, bearings, state machine, message encoding; node inspector panels | 2–3 wk (shared with Phase 1) | Same messages as the native build on the golden scenarios |
 | **M3** | LoRa layer: TDMA, channel model, packet arcs, timeline, packet inspector; health reports; ranging sweeps | 1.5–2 wk | Airtime and duty cycle match `lora_budget.py`; health pauses during events |
-| **M4** | Gateway in Pyodide: crossing events, bearing fusion, TDOA bursts with correlation plots, track vs truth, coverage map, radar stub and cue messages | 2 wk | A crossing in the demo gives the same alert as the Python run |
+| **M3b** | Network: several clusters on separate channels, abstract backbone (latency, capacity, loss), scheduled relays, `HANDOFF`, node-to-node overhearing, candidate-triggered listening and `LOCAL_FIX` | 1–1.5 wk | Time to confirm and energy, with and without node-to-node; a line over a ridge keeps working with a relay |
+| **M4** | Gateway in Pyodide: crossing events, bearing fusion, TDOA bursts with correlation plots, track vs truth, coverage map and operator alerts | 2 wk | A crossing in the demo gives the same alert as the Python run |
 | **M5** | Provisioning walk-through (phone avatar, then real phone); scenario library with scoring (detection rate, false alarms per km per day) | 1.5–2 wk | Scores the Phase 1 exit criteria visibly |
 | Later | Turbulence, laptop-mic node, hardware-in-the-loop, field log replay | — | — |
 
@@ -202,7 +201,7 @@ core (C/C++) unless Rust is chosen for the gateway, in which case use Rust for b
   The demo loads them through a file picker or a local folder. Before a public build bundles any
   recording, check its licence.
 - **Public or private.** A public demo of a counter-drone perimeter shows its weak spots, such as
-  coverage gaps and the radar floor. Default to a private deployment; decide before M5.
+  coverage gaps. Default to a private deployment; decide before M5.
 - **Pyodide size and speed.** If the gateway needs > ~50 ms per 10 ms tick at 13 nodes, port its
   hot loop. Measure in M4.
 - **Golden tests are the cost of faithfulness.** Two sims (Python and WASM) drift apart without

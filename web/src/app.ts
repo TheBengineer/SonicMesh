@@ -43,7 +43,6 @@ function presentIds(world: World, scn: ScenarioFile): Set<string> {
     COMPONENT.road,
     COMPONENT.trees,
     COMPONENT.gateway,
-    COMPONENT.radar,
     COMPONENT.simWorker,
   ]);
   if (s.nodes.some((n) => n.kind === 'detector')) ids.add(COMPONENT.nodeDetector);
@@ -560,7 +559,6 @@ export function startApp(root: HTMLElement): void {
   root.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach((b) =>
     b.addEventListener('click', () => setMode(b.dataset.mode as Mode)),
   );
-  need<HTMLButtonElement>(root, '#select-radar').addEventListener('click', () => select({ kind: 'radar' }));
   need<HTMLButtonElement>(root, '#open-about').addEventListener('click', () => aboutDialog.showModal());
   need<HTMLButtonElement>(root, '#open-whats-real').addEventListener('click', () => {
     renderLedger(ledgerDialog, ledger, presentIds(worldNow(), scenario));

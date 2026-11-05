@@ -3,25 +3,34 @@
 Date: 2026-11-04. Status: draft for M2–M4 and the first firmware. Numbers come from docs 02 and 06;
 airtimes from `sim/experiments/lora_budget.py`.
 
-**Scope:** the LoRa link between nodes and the gateway (frames, schedule, messages, security),
-and a first sketch of the gateway → radar/C2 interface.
+**Scope:** the perimeter's network: backbone between controllers, local clusters, node-to-node
+traffic (frames, schedule, messages, security), and a first sketch of the operator interface. Radar
+and other outside sensors are out of scope for now.
+
+**Terms:** a *controller* is what earlier docs and the demo call the gateway: a GNSS-timed Raspberry
+Pi with a LoRa radio. A *cluster* is one controller and the nodes it schedules.
 
 ## 1. Decisions in v0
 
-1. **Star, not mesh.** At 350 m spacing every node has 28–39 dB of margin to a gateway kilometres
-   away (doc 02), so v0 is a TDMA star. A node with a poor gateway link can be assigned as a
-   *relay* for a neighbour's slot later; multi-hop routing is out of scope.
+1. **Backbone + local mesh clusters, not one big mesh.** The perimeter is a chain of clusters, so
+   it can cross ridges, rivers and other terrain that a single radio cell couldn't. Controllers
+   are linked in a mesh (the backbone). Inside a cluster, most nodes reach the controller directly
+   (28–39 dB of margin at 350 m spacing, doc 02); nodes behind terrain go through a scheduled relay.
+   Most traffic stays local; only summaries cross the backbone (section 3a).
 2. **Region: US915 first.** The event layer runs 500 kHz channels at tens of percent occupancy.
    US915 allows that (digital modulation, ≥ 500 kHz bandwidth, no dwell limit). **EU868 does not**:
    its 1% duty cycle in 868.0–868.6 MHz rules out the event layer as designed, and only the
    869.4–869.65 MHz sub-band allows 10%. An EU build needs its own plan (SF7/250 kHz event slots
    in 869.525, fewer TDOA bursts). Tracked as an open question.
-3. **Gateway owns time.** The gateway's GNSS-disciplined beacon defines every slot. Detector
-   nodes (no GNSS) time-stamp the beacon's RxDone and run their sample clock against it; array
-   nodes also check against their own PPS.
+3. **Each controller owns its cluster's time.** Its GNSS-disciplined beacon defines every slot.
+   Detector nodes (no GNSS) time-stamp the beacon's RxDone and run their sample clock against it;
+   array nodes also check against their own PPS. All controllers use GNSS time, so superframes line
+   up across clusters.
 4. **Authenticated, not encrypted.** Every frame carries a 4-byte truncated AES-CMAC under the
    site key, with a replay counter. Contents are not secret enough to justify encryption in v0;
    a flag bit reserves it.
+5. **Nodes may talk to nodes.** Every frame is a broadcast, so a node can use what it overhears from
+   its neighbours (section 3b). This adds no routing and, in event mode, no airtime.
 
 ## 2. Frame layout
 
@@ -30,9 +39,9 @@ All multi-byte fields little-endian. Bit-packed payloads are LSB first.
 ```
 | hdr (1) | src (1) | ctr (1) | payload (0–247) | mic (4) |
 hdr:  type (4 bits) | version (2) = 0 | flags (2): bit0 relayed, bit1 encrypted (reserved)
-src:  node id 1–254; 0 = gateway, 255 = unprovisioned
+src:  node id 1–254, unique within a cluster; 0 = controller, 255 = unprovisioned
 ctr:  low 8 bits of the superframe counter (full counter is in the beacon) → replay window
-mic:  AES-CMAC-32 over (site id, full superframe counter, hdr..payload)
+mic:  AES-CMAC-32 over (site id, cluster id, full superframe counter, hdr..payload)
 ```
 
 Overhead: 7 bytes. LoRa CRC on, explicit header.
@@ -48,8 +57,8 @@ Overhead: 7 bytes. LoRa CRC on, explicit header.
 | Scheduled slots | 900–3,980 ms | 14 slots × 220 ms, assigned by the beacon: `HEALTH`, `RANGING_*`, `JOIN`, `ACK` |
 
 - Each node's `HEALTH` comes round every 75 superframes (5 min), staggered by node id.
-- Worst-case alert latency: ≤ 4 s to the gateway, + 4 s until the next beacon switches modes.
-  (Phase 4 target: ≤ 5 s to the radar. Tighten by beaconing the mode switch immediately.)
+- Worst-case alert latency: ≤ 4 s to the controller, + 4 s until the next beacon switches modes.
+  (Phase 4 target: ≤ 5 s to the operator. Tighten by beaconing the mode switch immediately.)
 - Gateway beacon duty: 5% (fine in US915; in EU868 only in 869.4–869.65 MHz).
 
 ### Event mode — SF7 / 500 kHz, superframe 500 ms (2 Hz updates)
@@ -60,10 +69,54 @@ Overhead: 7 bytes. LoRa CRC on, explicit header.
 | Node slots | 30–290 ms | Up to 16 slots × 16 ms for `DETECT` (11.6 ms at 15 B) |
 | Burst window | 300–495 ms | Allocated per beacon: `SNIPPET` chunks (100 ms per 255 B at SF7, 34 ms at SF5) |
 
-- The gateway enters event mode on any `DETECT_START` or radar cue, and leaves after 10 s with
-  no detections. `HEALTH` stops during events (doc 06); ranging never runs during events.
+- The controller enters event mode on any `DETECT_START` or a `HANDOFF` from a neighbouring
+  cluster (section 3a), and leaves after 10 s with no detections. `HEALTH` stops during events (doc 06); ranging never runs during events.
 - A 4 kbit snippet (1 s of 1-bit 4 kS/s audio) is 2 chunks at SF7 → one node per superframe, or
   5–6 chunks per window at SF5 when margins allow (gateway chooses per node from link SNR).
+
+### 3a. Backbone and clusters
+
+| Tier | Link | Carries | Stays off it |
+|---|---|---|---|
+| **Backbone** | Controller ↔ controller mesh. Bearer undecided (section 7) | Crossing events and tracks, `HANDOFF` to the next cluster, health roll-ups, configuration | Raw `DETECT`, `HEALTH` and ranging frames; snippets unless a fusion step asks for one |
+| **Cluster** | LoRa, the schedule above. One controller, up to about 13 nodes (the example line is ~4 km) | All node traffic in sections 3–5, including scheduled relays | |
+| **Node ↔ node** | The same LoRa frames, overheard | Neighbour detections and local fixes (section 3b) | |
+
+- **Channels.** Each cluster has its own idle and event channels, reused only at a distance of
+  3 or more clusters. Superframes are aligned by GNSS.
+- **Relays.** The controller assigns them in the beacon: a relay repeats a named node's frame in its
+  own slot with flag `relayed` set, at most 2 hops. Routes are scheduled, not discovered, so timing
+  stays deterministic. Each relayed frame uses a slot, which reduces the cluster's capacity.
+- **`HANDOFF`.** When a track heads for a neighbouring cluster, the controller sends it the track
+  state (section 4) over the backbone. That cluster enters event mode before the drone arrives.
+- **Rough backbone load (estimate):** one track update of ~32 B at 2 Hz is ~0.5 kbit/s per active
+  track, plus occasional roll-ups. A low-rate backbone is enough unless snippets cross it.
+
+### 3b. Node-to-node
+
+**Event mode: overhearing, no extra airtime.** Nodes already listen during the event superframe,
+so each one hears its neighbours' `DETECT` in their slots. Controllers send each node a neighbour
+table (ids and positions on a 2 m grid) when it joins. With two bearings an array node computes an
+intersection itself and sends `LOCAL_FIX` in its own slot, for the neighbours and the controller.
+
+**Idle mode: listen only with a candidate.** Listening to the whole 640 ms alert window would take
+16% × ~7 mA ≈ 1.1 mA, too much against a ~2 mA node. So a node opens the alert window only when
+its own detector has a candidate. A neighbour's alert heard then counts as agreement, and the node
+may lower its threshold for that f0 for a few seconds (a cue from next door).
+
+**Where this helps (and where it doesn't).**
+- *First seconds:* two neighbours can confirm each other inside one 4 s superframe, before the
+  controller's beacon has switched modes.
+- *Cluster boundaries:* neighbours on either side can't both reach one controller. A boundary node
+  listens on the neighbouring cluster's event channel in slots agreed between the two controllers,
+  so it doesn't wait for the backbone.
+- *Behind terrain:* nodes keep working together when the controller or a relay is lost.
+- *Not much in the middle of an event:* the controller hears the same `DETECT` frames in the same
+  superframe, so its fix is about as fast, and it has every node's data. Cluster fusion stays the
+  authority; `LOCAL_FIX` is a fast first answer.
+
+To be simulated: confirmation time and energy with and without node-to-node, in the web demo and
+the perimeter runner.
 
 ## 4. Messages
 
@@ -77,6 +130,7 @@ Overhead: 7 bytes. LoRa CRC on, explicit header.
 | 5 | `RANGING_RESULT` | N→G | per neighbour: id (8), range dm (16), RSSI (8), SNR (8) | Up to 8 neighbours |
 | 6 | `JOIN` | N→G | lat, lon (32 each, 1e-7°), alt dm (16), accuracy dm (8), confident (1), node type (2), provisioning frame seq + time + MAC (doc 05) | Gateway checks recency (anti-replay) |
 | 7 | `ACK` | N→G | command id (8), result (8) | |
+| 8 | `LOCAL_FIX` | N→all | target x, y (12 each, 2 m grid relative to the controller), time (16), partner node (8), σ (4), confidence (4) | 8 B payload, fits a `DETECT` slot; used instead of `DETECT` in that slot, section 3b |
 
 **Track state in the event beacon** (for window alignment, doc 02 rank 6): track id (8), x/y/z on a
 2 m grid relative to the gateway (3 × 12), velocity (3 × 8, 0.5 m/s), time (16) → 11 B.
@@ -94,26 +148,31 @@ The gateway schedules RTToF exchanges in idle scheduled slots: one pair per slot
 across hopped channels (doc 06). Initiator and responder are named in the beacon; the initiator
 reports `RANGING_RESULT`. Never during events.
 
-## 6. Gateway → radar / C2 (sketch)
+## 6. Controller → operator (sketch)
 
-JSON over a local network socket (newline-delimited), versioned:
+Any controller can serve this, with the backbone behind it. JSON over a local network socket
+(newline-delimited), versioned:
 
 ```json
 {"v": 0, "type": "alert", "id": "evt-0192", "t": "2026-11-04T17:03:21.250Z",
  "segment": {"from_node": 6, "to_node": 7}, "position": {"lat": 0, "lon": 0, "alt_m": 30, "sigma_m": 25},
  "velocity": {"heading_deg": 182, "speed_mps": 21}, "class": "multirotor-small", "confidence": 0.86,
- "evidence": {"nodes": [5, 6, 7], "tdoa_fix": true}}
+ "evidence": {"cluster": 2, "nodes": [5, 6, 7], "tdoa_fix": true}}
 ```
 
 Other types: `track_update`, `coverage` (per-segment detection radius from the health
-noise floors), `gap` (segment without a working node), and inbound `cue` (radar track → raise
-sensitivity in a segment). Fixed when the radar is chosen.
+noise floors), and `gap` (segment without a working node or controller).
 
 ## 7. Open questions
 
 - EU868 event-layer plan, if needed.
 - Whether 1-of-4 slotted ALOHA in the alert window is enough when a drone triggers 5+ nodes at
   once (simulate in M3; fallback: each node also gets a 1-in-N reserved alert slot).
-- Relay assignment for nodes behind terrain.
+- Backbone bearer: LoRa on its own channel with raised antennas, Wi-Fi HaLow or point-to-point
+  links. The simulation treats it as an abstract link with latency, capacity and loss until chosen.
+- Losing a controller: can a neighbour adopt its nodes, or do they run node-to-node only until it's back?
+- Relay assignment for nodes behind terrain, and cluster size once relays use up slots.
+- US915 rules for narrow channels: FCC 15.247 generally requires frequency hopping below 500 kHz, so
+  the 125 kHz idle layer probably has to hop rather than sit on one channel. Check before hardware.
 - Key management: site key provisioning alongside the acoustic provisioning (doc 05 uses the
   same site key for the phone frames).
