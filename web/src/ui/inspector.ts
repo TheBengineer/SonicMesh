@@ -1,12 +1,10 @@
 import { CLASS_ACOUSTICS } from '../acoustics/model';
 import type { LoraView, MessageView, PacketView } from '../lora/types';
 import { HEALTH_FIELDS, type Message } from '../protocol';
-import { COMPONENT } from '../provenance/components';
-import type { Ledger } from '../provenance/ledger';
 import type { Selection } from '../selection';
 import type { NodeSpec, PathSpec } from '../sim/scenario';
 import { DRONE_CLASSES, type DroneState, type World } from '../sim/world';
-import { badgeHtml, esc, fmt } from './dom';
+import { esc, fmt, SPEAKER_ICON } from './dom';
 
 // `key` is the structure of the panel. The DOM is rebuilt only when it changes, so open dropdowns stay open.
 // `live` holds values that change every tick and are written in place.
@@ -35,7 +33,6 @@ export interface InspectView {
 export interface InspectContext {
   world: World;
   selection: Selection;
-  ledger: Ledger;
   view: InspectView;
   lora: LoraView | null;
 }
@@ -254,7 +251,7 @@ function packetPanel(ctx: InspectContext, id: number): Panel {
   if (!packet) {
     return {
       key: `packet|${id}|missing`,
-      html: `<h2>Packet ${id}</h2><p class="note">This packet is outside the retained history. Pick a block on the timeline.</p>`,
+      html: `<p class="note">This packet is outside the retained history. Pick a block on the timeline.</p>`,
       live: {},
     };
   }
@@ -264,13 +261,11 @@ function packetPanel(ctx: InspectContext, id: number): Panel {
   const rx = packet.rx
     .map((r) => `<tr><td>${r.id === 0 ? 'Gateway' : `Node ${r.id}`}</td><td>${esc(r.fate)}</td><td>${Number.isFinite(r.rssi) ? r.rssi.toFixed(1) : '—'}</td><td>${Number.isFinite(r.snr) ? r.snr.toFixed(1) : '—'}</td><td>${esc(r.reason)}</td></tr>`)
     .join('');
-  const tags = [COMPONENT.loraCodec, COMPONENT.loraAirtime, COMPONENT.loraMac].map((c) => badgeHtml(ctx.ledger.byId.get(c))).join('');
   return {
     key: `packet|${packet.id}`,
     html: `
-      <h2>Packet ${packet.id} · ${esc(packet.type)}</h2>
-      <div class="badges">${tags}</div>
       ${rows([
+        ['Type', esc(packet.type)],
         ['Transmitter', packet.tx === 0 ? 'Gateway' : `Node ${packet.tx}`],
         ['Channel', esc(packet.channel)],
         ['PHY', `SF${packet.sf}, ${packet.bw / 1000} kHz`],
@@ -284,6 +279,13 @@ function packetPanel(ctx: InspectContext, id: number): Panel {
       <p class="note">Header, source, counter and MIC are marked; payload bytes are coloured by field.</p>
       <h3>Decoded fields</h3>
       ${fields}
+      ${
+        packet.message.type === 'SNIPPET'
+          ? `<h3>Clip</h3>
+      <canvas class="plot snippet" data-plot="snippet" aria-label="Snippet clip spectrogram, 0 to 2 kHz"></canvas>
+      <p class="note">The clip as the gateway gets it: 1 bit, 4 kS/s, 0 to 2 kHz, dB relative to its strongest bin. The sim keeps every fourth sample with no filter first, so higher sound folds into this range. Dashed: the bottom of the detector's band; its top, 4 kHz, is above this plot. Green: the latest line this node reported in that detection.</p>`
+          : ''
+      }
       <h3>Receivers</h3>
       <table class="data-table"><thead><tr><th>Receiver</th><th>Fate</th><th>RSSI dBm</th><th>SNR dB</th><th>Reason</th></tr></thead><tbody>${rx}</tbody></table>
     `,
@@ -298,12 +300,9 @@ function messagesNode(ctx: InspectContext, n: NodeSpec): Panel {
   const list = all.filter((m) => filter === 'all' || m.dir === filter).slice(-40).reverse();
   const row = (m: MessageView): string =>
     `<tr><td>${m.t.toFixed(2)}</td><td>${esc(m.dir)}</td><td>${esc(m.type)}</td><td>${m.peer === 0 ? 'GW' : m.peer}</td><td class="mono">${m.frameHex.slice(0, 8).join(' ')}${m.frameHex.length > 8 ? ' …' : ''}</td></tr>`;
-  const tags = [COMPONENT.loraCodec, COMPONENT.loraMac, COMPONENT.loraNodeStub].map((c) => badgeHtml(ctx.ledger.byId.get(c))).join('');
   return {
     key: `messages|${n.id}|${filter}|${all.length}|${all.at(-1)?.id ?? 0}`,
     html: `
-      <h2>Node ${n.id}, messages</h2>
-      <div class="badges">${tags}</div>
       <div class="actions">
         ${(['all', 'sent', 'received'] as const).map((f) => `<button data-action="msg-filter" data-value="${f}" aria-pressed="${filter === f}">${f}</button>`).join('')}
       </div>
@@ -317,11 +316,10 @@ function messagesNode(ctx: InspectContext, n: NodeSpec): Panel {
 function healthNode(ctx: InspectContext, n: NodeSpec): Panel {
   const view = ctx.lora?.nodes.find((o) => o.id === n.id);
   const health = view?.health;
-  const tags = [COMPONENT.healthReport, COMPONENT.energyModel].map((c) => badgeHtml(ctx.ledger.byId.get(c))).join('');
   if (!health) {
     return {
       key: `health|${n.id}|none`,
-      html: `<h2>Node ${n.id}, health</h2><div class="badges">${tags}</div><p class="note">No HEALTH report decoded yet. Each node reports every 75 idle superframes.</p>`,
+      html: `<p class="note">No HEALTH report decoded yet. Each node reports every 75 idle superframes.</p>`,
       live: {},
     };
   }
@@ -334,8 +332,6 @@ function healthNode(ctx: InspectContext, n: NodeSpec): Panel {
   return {
     key: `health|${n.id}|${health.atS}`,
     html: `
-      <h2>Node ${n.id}, health</h2>
-      <div class="badges">${tags}</div>
       <p class="note">HEALTH at ${health.atS.toFixed(2)} s, 152 bits in HEALTH_FIELDS order. MODELLED fields come from sim state; ASSUMED fields use the simple battery, solar and clock models.</p>
       <table class="data-table"><thead><tr><th>Field</th><th>Bits</th><th>Raw</th><th>Value</th><th>Source</th></tr></thead><tbody>${rowsHtml}</tbody></table>
     `,
@@ -346,7 +342,6 @@ function healthNode(ctx: InspectContext, n: NodeSpec): Panel {
 function rangingNode(ctx: InspectContext, n: NodeSpec): Panel {
   const view = ctx.lora?.nodes.find((o) => o.id === n.id);
   const list = [...(view?.ranging ?? [])].reverse();
-  const tags = [COMPONENT.ranging, COMPONENT.loraAirtime].map((c) => badgeHtml(ctx.ledger.byId.get(c))).join('');
   const rowsHtml = list
     .map(
       (r) =>
@@ -356,8 +351,6 @@ function rangingNode(ctx: InspectContext, n: NodeSpec): Panel {
   return {
     key: `ranging|${n.id}|${list.length}|${list[0]?.atS ?? 0}`,
     html: `
-      <h2>Node ${n.id}, ranging</h2>
-      <div class="badges">${tags}</div>
       <p class="note">RTToF results in idle slots, true distance plus N(0, 4 m) and a static NLOS bias (p 0.25, up to 12 m). Ranging never runs in event mode.</p>
       <table class="data-table"><thead><tr><th>t s</th><th>Peer</th><th>Measured m</th><th>True m</th><th>Error m</th><th>RSSI</th><th>SNR</th></tr></thead><tbody>${rowsHtml || '<tr><td colspan="7">No sweep yet.</td></tr>'}</tbody></table>
     `,
@@ -376,9 +369,7 @@ function healthCell(view: LoraView, id: number): string {
 }
 
 function droneTab(ctx: InspectContext, d: DroneState): Panel {
-  const { world, ledger } = ctx;
-  const tag = (id: string): string => badgeHtml(ledger.byId.get(id));
-  const scripted = d.path.kind !== 'manual';
+  const { world } = ctx;
   const classOptions = Object.entries(DRONE_CLASSES)
     .map(([k, v]) => `<option value="${k}"${k === d.class ? ' selected' : ''}>${esc(v.label)}</option>`)
     .join('');
@@ -386,14 +377,13 @@ function droneTab(ctx: InspectContext, d: DroneState): Panel {
     `<button data-action="drone-flight" data-id="${d.id}" data-value="${mode}" aria-pressed="${d.flight === mode}">${label}</button>`;
   const pathButton = (kind: string, label: string): string =>
     `<button data-action="drone-path" data-id="${d.id}" data-value="${kind}" aria-pressed="${d.path.kind === kind}">${label}</button>`;
+  const scripted = d.path.kind !== 'manual';
   const alt = d.alt;
   const agl = alt - world.terrain.height(d.x, d.y);
   const bpf = CLASS_ACOUSTICS[d.class].bpf_hz;
   return {
     key: `drone|${d.id}|${d.class}|${d.flight}|${d.path.kind}`,
     html: `
-      <h2>Drone ${d.id}</h2>
-      <div class="badges">${tag(COMPONENT.droneDynamics)}${tag(COMPONENT.droneClasses)}${scripted ? tag(COMPONENT.dronePaths) : ''}${tag(COMPONENT.droneRotors)}</div>
       ${rows([
         ['Class', `<select data-action="drone-class" data-id="${d.id}" aria-label="Drone class">${classOptions}</select>`],
         ['Path', esc(pathLabel(d.path))],
@@ -436,14 +426,12 @@ function droneTab(ctx: InspectContext, d: DroneState): Panel {
 }
 
 function detailsNode(ctx: InspectContext, n: NodeSpec): Panel {
-  const { world, ledger } = ctx;
+  const { world } = ctx;
   const isArray = n.kind === 'array';
   const other = isArray ? 'detector' : 'array';
   return {
     key: `node|${n.id}|${n.kind}`,
     html: `
-      <h2>Node ${n.id}</h2>
-      <div class="badges">${badgeHtml(ledger.byId.get(isArray ? COMPONENT.nodeArray : COMPONENT.nodeDetector))}${badgeHtml(ledger.byId.get(COMPONENT.mic))}${badgeHtml(ledger.byId.get(COMPONENT.loraNodeStub))}</div>
       ${rows([
         ['Type', isArray ? 'Array, 4 mics' : 'Detector, 1 mic'],
         ['True position', live('n-pos')],
@@ -463,8 +451,7 @@ function detailsNode(ctx: InspectContext, n: NodeSpec): Panel {
 }
 
 function waterfallNode(ctx: InspectContext, n: NodeSpec): Panel {
-  const { ledger, view } = ctx;
-  const isArray = n.kind === 'array';
+  const { view } = ctx;
   const mics = micKeysOf(n);
   const mic = view.mic && mics.includes(view.mic) ? view.mic : mics[0];
   const listening = view.listening === mic;
@@ -476,12 +463,14 @@ function waterfallNode(ctx: InspectContext, n: NodeSpec): Panel {
   return {
     key: `waterfall|${n.id}|${n.kind}|${mic}|${listening}|${overlayOn}|${truthOn}|${view.ambientLabel}`,
     html: `
-      <h2>Node ${n.id}, waterfall</h2>
-      <div class="badges">${badgeHtml(ledger.byId.get(isArray ? COMPONENT.nodeArray : COMPONENT.nodeDetector))}${badgeHtml(ledger.byId.get(COMPONENT.waterfall))}</div>
       <div class="actions"><select data-action="mic-select" data-id="${n.id}" aria-label="Mic">${options}</select></div>
-      <canvas class="plot wf" data-plot="waterfall" width="300" height="512" aria-label="Mic spectrogram, 0 to 8 kHz"></canvas>
+      <div class="wf-frame">
+        <canvas class="plot wf" data-plot="waterfall" width="300" height="512" aria-label="Mic spectrogram, 0 to 8 kHz"></canvas>
+        ${listening ? `<span class="speaker" title="Listening to this mic">${SPEAKER_ICON}</span>` : ''}
+      </div>
       <div class="scale"><span>10 dB</span><span class="ramp"></span><span>90 dB</span></div>
       <p class="note">dB SPL per bin, as the line level of a sine in that bin. 1024-point Hann FFT, 50 % overlap, 0 to 8 kHz, newest on the right.</p>
+      <p class="note">Debug lines. Dashed: the 100 to 4000 Hz band the stub detector adds up; it does not pick a frequency. Blue: when it detected, from the start to the end of the detection. Green: one upper harmonic per drone it can pick out, traced from this audio while the node detects, so each line follows its band's Doppler shift and wobble. It is a display aid: detecting still comes from the band level, and a faint drone can show blue with no green.</p>
       <div class="actions"><button data-action="overlay" data-id="${n.id}" aria-pressed="${overlayOn}"${truthOn ? '' : ' disabled'}>Truth: blade-pass harmonics</button></div>
       <p class="note">${
         truthOn
@@ -501,13 +490,12 @@ function waterfallNode(ctx: InspectContext, n: NodeSpec): Panel {
 }
 
 function gatewayTab(ctx: InspectContext): Panel {
-  const { world, ledger, lora } = ctx;
+  const { world, lora } = ctx;
   const g = world.state.gateway;
-  const tags = [COMPONENT.gateway, COMPONENT.loraMac, COMPONENT.loraAirtime].map((c) => badgeHtml(ledger.byId.get(c))).join('');
   if (!lora) {
     return {
       key: 'gateway|none',
-      html: `<h2>Gateway</h2><div class="badges">${tags}</div>${rows([['True position', live('g-pos')]])}<p class="note">Waiting for the first LoRa superframe.</p>`,
+      html: `${rows([['True position', live('g-pos')]])}<p class="note">Waiting for the first LoRa superframe.</p>`,
       live: { 'g-pos': `${fmt(g.x)}, ${fmt(g.y)} m` },
     };
   }
@@ -520,8 +508,6 @@ function gatewayTab(ctx: InspectContext): Panel {
   return {
     key: `gateway|${lora.mode}|${lora.superframe}|${lora.nodes.length}|${lora.gateway.health.map((h) => h.lastHealthS ?? 0).join(',')}`,
     html: `
-      <h2>Gateway</h2>
-      <div class="badges">${tags}</div>
       ${rows([
         ['True position', live('g-pos')],
         ['Mode', esc(lora.mode)],
@@ -542,17 +528,12 @@ function gatewayTab(ctx: InspectContext): Panel {
 }
 
 function sceneTab(ctx: InspectContext): Panel {
-  const { world, ledger } = ctx;
+  const { world } = ctx;
   const s = world.state;
   const t = world.terrain;
-  const tags = [COMPONENT.terrain, COMPONENT.road, COMPONENT.trees]
-    .map((id) => badgeHtml(ledger.byId.get(id)))
-    .join('');
   return {
     key: `scene|${world.name}|${s.truth}|${s.nodes.length}|${s.drones.length}`,
     html: `
-      <h2>${esc(world.name)}</h2>
-      <div class="badges">${tags}</div>
       ${rows([
         ['Seed', String(t.seed)],
         ['Terrain', `${t.size[0] / 1000} x ${t.size[1] / 1000} km`],
@@ -561,7 +542,7 @@ function sceneTab(ctx: InspectContext): Panel {
         ['Truth overlay', s.truth ? 'on' : 'off'],
         ['Sim time', live('s-time')],
       ])}
-      <p class="note">Click a node, drone, or the gateway to inspect it. Drag nodes and the gateway on the ground. Click the ground to add when a + button is active.</p>
+      <p class="note">Click a node, drone, or the gateway to inspect it. Drag nodes and the gateway on the ground. Click the ground to add when an add button is active.</p>
     `,
     live: { 's-time': `${fmt(s.tick * 0.01, 2)} s, tick ${s.tick}` },
   };

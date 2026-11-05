@@ -1,7 +1,8 @@
 import { MicAnalysis, TILE_COLS, TILE_ROWS } from '../audio/analysis';
 import type { AudioRing } from '../acoustics/history';
+import type { DetectSpan } from '../lora/types';
 import type { NodeKind } from '../sim/scenario';
-import { esc, need } from './dom';
+import { esc, need, SPEAKER_ICON } from './dom';
 
 // Tiles are at least this wide on screen; the grid fits as many per row as the strip allows.
 export const TILE_MIN_PX = 120;
@@ -27,12 +28,15 @@ export interface StripNode {
   kind: NodeKind;
   mic: string;
   detecting: boolean;
+  spans: DetectSpan[];
+  listening: boolean;
 }
 
 interface Tile {
   button: HTMLButtonElement;
   canvas: HTMLCanvasElement;
   level: HTMLElement;
+  speaker: HTMLElement;
 }
 
 // One small scrolling waterfall per node, all fed from the audio rings. The strip owns only the analysis; it draws
@@ -51,18 +55,18 @@ export class WaterfallStrip {
   ) {
     root.innerHTML = `
       <div class="wf-head">
-        <h3>Waterfalls</h3>
+        <button class="panel-toggle wf-toggle" aria-expanded="true" title="Show or hide the waterfalls">Waterfalls</button>
         ${badge}
         <div class="scale"><span>10 dB</span><span class="ramp"></span><span>90 dB</span></div>
       </div>
       <div class="wf-grid"></div>
-      <p class="note">One tile per node, first mic. The last 6 s, same FFT, dB scale and colours as the Waterfall tab. A red edge means the node is detecting. Click a tile to open that node.</p>`;
+      <p class="note">One tile per node, first mic. The last 6 s, same FFT, dB scale and colours as the Waterfall tab. A red edge means the node is detecting. Dashed lines mark the 100 to 4000 Hz band the detector measures; blue marks when it detected, and each green line follows one harmonic of a drone in the audio. Click a tile to open that node.</p>`;
     this.grid = need<HTMLElement>(root, '.wf-grid');
     new ResizeObserver(() => this.layout()).observe(this.grid);
   }
 
   // Draws every tile. Rebuilds the tiles when the node list changes.
-  update(nodes: StripNode[], selected: number | null, ringFor: (key: string) => AudioRing | undefined): void {
+  update(nodes: StripNode[], selected: number | null, nowS: number, ringFor: (key: string) => AudioRing | undefined): void {
     const key = nodes.map((n) => `${n.id}.${n.kind}.${n.mic}`).join(',');
     if (key !== this.key) this.rebuild(nodes, key);
     const live = new Set<string>();
@@ -71,6 +75,7 @@ export class WaterfallStrip {
       if (!tile) continue;
       tile.button.classList.toggle('detecting', n.detecting);
       tile.button.setAttribute('aria-pressed', String(selected === n.id));
+      tile.speaker.hidden = !n.listening;
       const ring = ringFor(n.mic);
       if (!ring) {
         tile.level.textContent = 'no audio';
@@ -82,8 +87,9 @@ export class WaterfallStrip {
         an = new MicAnalysis(n.mic);
         this.analyses.set(n.mic, an);
       }
-      an.update(ring, null);
+      an.update(ring, null, n.detecting);
       an.drawStrip(tile.canvas);
+      an.drawMarks(tile.canvas, n.spans, nowS);
       const db = an.latestBandDb();
       tile.level.textContent = db === null ? '—' : `${db.toFixed(0)} dB`;
     }
@@ -102,13 +108,14 @@ export class WaterfallStrip {
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'wf-tile';
-      button.innerHTML = `<span class="wf-name">Node ${n.id}, ${esc(n.kind)}</span><canvas width="${TILE_COLS}" height="${TILE_ROWS}" aria-label="Node ${n.id} waterfall"></canvas><span class="wf-level"></span>`;
+      button.innerHTML = `<span class="wf-name">Node ${n.id}, ${esc(n.kind)}</span><canvas width="${TILE_COLS}" height="${TILE_ROWS}" aria-label="Node ${n.id} waterfall"></canvas><span class="wf-level"></span><span class="speaker" title="Listening to this node" hidden>${SPEAKER_ICON}</span>`;
       button.addEventListener('click', () => this.onSelect(n.id));
       this.grid.append(button);
       this.tiles.set(n.id, {
         button,
         canvas: need<HTMLCanvasElement>(button, 'canvas'),
         level: need<HTMLElement>(button, '.wf-level'),
+        speaker: need<HTMLElement>(button, '.speaker'),
       });
     }
     this.count = nodes.length;

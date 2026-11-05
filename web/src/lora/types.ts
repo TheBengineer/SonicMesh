@@ -63,14 +63,22 @@ export interface RangingView {
   snr: number;
 }
 
+// One stretch of detection at a node. endS is null while it runs; lineHz is the last line the node reported.
+export interface DetectSpan {
+  startS: number;
+  endS: number | null;
+  lineHz: number | null;
+}
+
 export interface NodeView {
   id: number;
   kind: 'detector' | 'array';
   detecting: boolean;
-  // The drone this detection belongs to. The stub takes the nearest drone from truth.
-  targetId: number | null;
+  // The drones this detection belongs to, nearest first. The stub takes them from truth.
+  targetIds: number[];
   beaconHeard: boolean;
   lastDetectionS: number;
+  detectSpans: DetectSpan[];
   detections: number;
   queue: number;
   retries: number;

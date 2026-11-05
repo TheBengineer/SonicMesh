@@ -14,6 +14,9 @@ export class Listener {
   key: string | null = null;
   rate = 0;
   private ctx: AudioContext | null = null;
+  private ready: Promise<void> | null = null;
+  // The mic most recently asked for. start() waits on the browser, and may be overtaken while it does.
+  private wanted: string | null = null;
   private node: AudioWorkletNode | null = null;
   private gainNode: GainNode | null = null;
   private gainValue = 1;
@@ -24,11 +27,17 @@ export class Listener {
   constructor(private readonly host: SimHost) {}
 
   async start(key: string): Promise<void> {
-    if (!this.ctx) await this.init();
+    this.wanted = key;
+    this.ready ??= this.init().catch((err: unknown) => {
+      this.ready = null;
+      throw err;
+    });
+    await this.ready;
     const ctx = this.ctx;
     const node = this.node;
     if (!ctx || !node) return;
     if (ctx.state === 'suspended') await ctx.resume();
+    if (this.wanted !== key) return;
     this.key = key;
     this.cursor = -1;
     node.port.postMessage({ t: 'clear' });
@@ -36,7 +45,13 @@ export class Listener {
     this.timer = window.setInterval(() => this.pump(), PUMP_MS);
   }
 
+  // Retries a start the browser held back, from a later user gesture.
+  wake(): void {
+    if (this.ctx?.state === 'suspended') void this.ctx.resume();
+  }
+
   stop(): void {
+    this.wanted = null;
     this.key = null;
     window.clearInterval(this.timer);
     this.timer = 0;

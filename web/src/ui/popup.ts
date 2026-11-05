@@ -32,7 +32,7 @@ export interface Tail {
 }
 
 export const WINDOW_MIN: Size = { w: 260, h: 180 };
-export const WINDOW_DEFAULT: Size = { w: 380, h: 460 };
+export const WINDOW_DEFAULT: Size = { w: 460, h: 460 };
 const GAP_PX = 40;
 const MARGIN_PX = 12;
 const TAIL_WIDTH_PX = 10;

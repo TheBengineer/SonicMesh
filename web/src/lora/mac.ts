@@ -25,7 +25,7 @@ import {
   type Vec3,
   type Wave,
 } from './channel';
-import { NodeStub, RANGING_MAX_LINK_M, measureRange, type Detection, type HealthValue, type NodeObservation, type TruthTarget } from './nodeStub';
+import { EARSHOT_M, NodeStub, RANGING_MAX_LINK_M, measureRange, type Detection, type HealthValue, type NodeObservation, type TruthTarget } from './nodeStub';
 import type { GatewayView, GridSlot, HealthView, LoraView, MessageView, NodeView, PacketView, RangingView, RxView } from './types';
 
 export const IDLE_SUPERFRAME_S = 4;
@@ -346,6 +346,18 @@ export class LoRaNetwork {
 
   private node(id: number): NetNode | undefined {
     return this.nodes.find((n) => n.spec.id === id);
+  }
+
+  // Every drone in earshot of a node, nearest first. A detecting node always names at least the nearest drone.
+  private targetsOf(node: NetNode): number[] {
+    const near = this.truth
+      .map((t) => ({ t, d: Math.hypot(t.x - node.spec.x, t.y - node.spec.y) }))
+      .filter(({ t, d }) => d <= EARSHOT_M[t.class])
+      .sort((a, b) => a.d - b.d)
+      .map(({ t }) => t.id);
+    if (near.length > 0) return near;
+    const nearest = this.nearestTruth(node);
+    return nearest ? [nearest.id] : [];
   }
 
   private nearestTruth(node: NetNode): TruthTarget | null {
@@ -847,9 +859,10 @@ export class LoRaNetwork {
       id: node.spec.id,
       kind: node.spec.kind,
       detecting: node.stub.detecting,
-      targetId: node.stub.detecting ? (this.nearestTruth(node)?.id ?? null) : null,
+      targetIds: node.stub.detecting ? this.targetsOf(node) : [],
       beaconHeard: node.beaconHeard,
       lastDetectionS: node.stub.lastDetectionS,
+      detectSpans: node.stub.spans.map((s) => ({ ...s })),
       detections: node.stub.detections,
       queue: node.stub.queue,
       retries: node.stub.retries,

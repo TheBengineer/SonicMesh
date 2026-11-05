@@ -41,9 +41,11 @@ const TX_COLOR: Record<string, string> = {
   ACK: '#8a98a8',
 };
 
-const LANE_H = 11;
-const TOP = 18;
-const LEFT = 40;
+const LANE_H = 4;
+const TOP = 1;
+const LEFT = 22;
+// Lanes are too thin for a label each.
+const LABEL_EVERY = 3;
 
 export class Timeline {
   private readonly play: HTMLButtonElement;
@@ -64,6 +66,7 @@ export class Timeline {
     const speedOptions = SPEEDS.map((s) => `<option value="${s}"${s === 1 ? ' selected' : ''}>${s}×</option>`).join('');
     root.innerHTML = `
       <div class="transport">
+        <button class="panel-toggle" id="tl-lanes-toggle" aria-expanded="true" title="Show or hide the LoRa logic analyser">LoRa</button>
         <button id="tl-reset" title="Clear the log and go back to the scenario file">⟲ Reset</button>
         <button id="tl-replay" title="Go back to tick 0 and replay the logged inputs">⏮ Replay</button>
         <button id="tl-play" title="Play or pause (P)">▶ Play</button>
@@ -71,16 +74,14 @@ export class Timeline {
         <select id="tl-speed" aria-label="Simulation speed">${speedOptions}</select>
         <span class="readout" id="tl-readout"></span>
         <button id="tl-truth" aria-pressed="false" title="Truth overlay (T)">Truth</button>
-        <span class="spacer"></span>
+        <span class="status" id="tl-status"></span>
         <button id="tl-load-scenario">Load scenario…</button>
         <button id="tl-load-inputs">Load inputs…</button>
         <button id="tl-save">Save run</button>
         <input id="tl-file-scenario" type="file" accept="application/json,.json" hidden />
         <input id="tl-file-inputs" type="file" accept="application/json,.json" hidden />
       </div>
-      <div class="lane-head"><span class="readout" id="tl-lane-caption">LoRa logic analyser, one lane per node and the gateway</span><span class="lane-key">click a block to open the packet</span></div>
-      <canvas class="lanes" id="tl-lanes" aria-label="LoRa transmit lanes and superframe grid"></canvas>
-      <div class="status" id="tl-status"></div>
+      <canvas class="lanes" id="tl-lanes" title="LoRa logic analyser, one lane per node and the gateway. Click a block to open the packet." aria-label="LoRa transmit lanes and superframe grid"></canvas>
     `;
     this.play = need<HTMLButtonElement>(root, '#tl-play');
     this.speed = need<HTMLSelectElement>(root, '#tl-speed');
@@ -100,6 +101,11 @@ export class Timeline {
     need<HTMLButtonElement>(root, '#tl-load-scenario').addEventListener('click', () => this.scenarioFile.click());
     need<HTMLButtonElement>(root, '#tl-load-inputs').addEventListener('click', () => this.inputsFile.click());
     need<HTMLButtonElement>(root, '#tl-save').addEventListener('click', () => handlers.saveRun());
+    const lanesToggle = need<HTMLButtonElement>(root, '#tl-lanes-toggle');
+    lanesToggle.addEventListener('click', () => {
+      this.canvas.hidden = !this.canvas.hidden;
+      lanesToggle.setAttribute('aria-expanded', String(!this.canvas.hidden));
+    });
     this.canvas.addEventListener('click', (e) => this.pick(e));
     this.scenarioFile.addEventListener('change', () => {
       const f = this.scenarioFile.files?.[0];
@@ -129,7 +135,7 @@ export class Timeline {
     if (this.status.textContent !== full) this.status.textContent = full;
     this.status.classList.toggle('replay', replaying);
     this.lastInfo = info;
-    this.draw(info);
+    if (!this.canvas.hidden) this.draw(info);
   }
 
   private draw(info: TimelineInfo): void {
@@ -140,7 +146,7 @@ export class Timeline {
     const nodes = lora?.nodes ?? [];
     const rows = 1 + nodes.length;
     const cssW = Math.max(320, canvas.clientWidth || 800);
-    const cssH = TOP + rows * LANE_H + 6;
+    const cssH = TOP + rows * LANE_H + 1;
     const dpr = Math.min(window.devicePixelRatio, 2);
     if (canvas.width !== Math.round(cssW * dpr) || canvas.height !== Math.round(cssH * dpr)) {
       canvas.width = Math.round(cssW * dpr);
@@ -161,19 +167,14 @@ export class Timeline {
     const x = (t: number): number => x0 + ((t - t0) / Math.max(1e-9, t1 - t0)) * (x1 - x0);
     this.geom = { t0, t1, laneH: LANE_H, top: TOP, rows: [0, ...nodes.map((n) => n.id)] };
 
-    // Lane labels and separators.
-    ctx.font = '10px system-ui, sans-serif';
+    // Lane labels.
+    ctx.font = '8px system-ui, sans-serif';
     ctx.textBaseline = 'middle';
     const labels = ['GW', ...nodes.map((n) => String(n.id))];
     labels.forEach((label, i) => {
-      const y = TOP + i * LANE_H + LANE_H / 2;
+      if (i % LABEL_EVERY !== 0) return;
       ctx.fillStyle = '#8a98a8';
-      ctx.fillText(label, 6, y);
-      ctx.strokeStyle = '#1c2530';
-      ctx.beginPath();
-      ctx.moveTo(x0, TOP + i * LANE_H);
-      ctx.lineTo(x1, TOP + i * LANE_H);
-      ctx.stroke();
+      ctx.fillText(label, 3, Math.max(4, TOP + i * LANE_H + LANE_H / 2));
     });
 
     // Superframe and slot grid.
@@ -205,15 +206,15 @@ export class Timeline {
       if (lane === undefined) continue;
       const a = x(Math.max(p.startS, t0));
       const b = Math.max(a + 1, x(Math.min(p.endS, t1)));
-      const y = TOP + lane * LANE_H + 2;
+      const y = TOP + lane * LANE_H;
       ctx.fillStyle = TX_COLOR[p.type] ?? '#8a98a8';
       ctx.globalAlpha = 0.85;
-      ctx.fillRect(a, y, Math.max(1, b - a), LANE_H - 4);
+      ctx.fillRect(a, y, Math.max(1, b - a), LANE_H - 1);
       if (info.selectedPacket === p.id) {
         ctx.globalAlpha = 1;
         ctx.strokeStyle = '#ffffff';
         ctx.lineWidth = 1;
-        ctx.strokeRect(a - 0.5, y - 0.5, Math.max(1, b - a) + 1, LANE_H - 3);
+        ctx.strokeRect(a - 0.5, y - 0.5, Math.max(1, b - a) + 1, LANE_H);
       }
     }
     ctx.globalAlpha = 1;
@@ -233,22 +234,28 @@ export class Timeline {
     const px = e.clientX - rect.left;
     const py = e.clientY - rect.top;
     const lane = Math.floor((py - this.geom.top) / this.geom.laneH);
-    if (lane < 0 || lane >= this.geom.rows.length) return;
-    const id = this.geom.rows[lane];
     const x0 = LEFT;
     const x1 = rect.width - 6;
     const t = this.geom.t0 + ((px - x0) / Math.max(1, x1 - x0)) * (this.geom.t1 - this.geom.t0);
     // short frames are drawn wider than their airtime, so accept clicks within a few pixels
     const slack = (4 / Math.max(1, x1 - x0)) * (this.geom.t1 - this.geom.t0);
-    let best: PacketView | null = null;
-    let bestGap = Infinity;
-    for (const p of lora.packets) {
-      if (p.tx !== id) continue;
-      const gap = t < p.startS ? p.startS - t : t > p.endS ? t - p.endS : 0;
-      if (gap > slack || gap > bestGap) continue;
-      if (gap < bestGap || (best && p.endS - p.startS < best.endS - best.startS)) best = p;
-      bestGap = gap;
+    // lanes are thin, so a click that misses its lane falls back to the ones either side
+    for (const row of [lane, lane - 1, lane + 1]) {
+      const id = this.geom.rows[row];
+      if (id === undefined) continue;
+      let best: PacketView | null = null;
+      let bestGap = Infinity;
+      for (const p of lora.packets) {
+        if (p.tx !== id) continue;
+        const gap = t < p.startS ? p.startS - t : t > p.endS ? t - p.endS : 0;
+        if (gap > slack || gap > bestGap) continue;
+        if (gap < bestGap || (best && p.endS - p.startS < best.endS - best.startS)) best = p;
+        bestGap = gap;
+      }
+      if (best) {
+        this.handlers.selectPacket(best.id);
+        return;
+      }
     }
-    if (best) this.handlers.selectPacket(best.id);
   }
 }

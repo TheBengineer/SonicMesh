@@ -10,6 +10,23 @@ function closeOnClick(dialog: HTMLDialogElement): void {
   });
 }
 
+// The first thing a visitor sees. Esc closes it and leaves the run paused.
+export function renderIntro(dialog: HTMLDialogElement, onStart: () => void): void {
+  dialog.innerHTML = `
+    <h2>Can you hear it coming?</h2>
+    <p>A small drone flying low is hard to spot, but it can't fly quietly.</p>
+    <p>
+      SonicMesh is a line of low-cost, $30 microphone nodes that listens for drones crossing a perimeter, and this
+      simulation lets you watch one get picked up, hear what each node hears, and fly it yourself.
+    </p>
+    <button class="start" autofocus>Close and start</button>
+  `;
+  dialog.querySelector('.start')?.addEventListener('click', () => {
+    dialog.close();
+    onStart();
+  });
+}
+
 export function renderAbout(dialog: HTMLDialogElement): void {
   dialog.innerHTML = `
     <button class="close" data-close aria-label="Close">Close</button>
@@ -23,7 +40,7 @@ export function renderAbout(dialog: HTMLDialogElement): void {
       can place, and the gateway. Milestone M0 covers the world, flight, editing, record and replay, and the
       provenance ledger. Milestone M1 adds the acoustic engine: every mic hears the drone through a modelled
       path, and you can see its waterfall and listen to it. The node and gateway code arrive in later milestones.
-      Each component is tagged in the badges and in the "What's real?" page.
+      Each component is tagged on the "What's real?" page.
     </p>
     <div class="links">
       <a href="${REPO}" target="_blank" rel="noopener">Repository on GitHub</a>
@@ -62,7 +79,7 @@ export function renderLedger(dialog: HTMLDialogElement, ledger: Ledger, present:
   dialog.innerHTML = `
     <button class="close" data-close aria-label="Close">Close</button>
     <h2>What's real?</h2>
-    <p>Every component has one tag. Badges in the inspector and legend read from the same file, provenance.yaml.</p>
+    <p>Every component has one tag, read from provenance.yaml.</p>
     <div class="summary">In this scene: ${esc(summary)}</div>
     <table class="ledger">
       <thead>

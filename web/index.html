@@ -21,37 +21,40 @@
           <div class="group">
             <span class="label">Edit</span>
             <button data-mode="select" aria-pressed="true">Select</button>
-            <button data-mode="add-node">+ Node</button>
-            <select id="place-kind" aria-label="Node type for new nodes">
-              <option value="detector">Detector</option>
-              <option value="array">Array</option>
-            </select>
-            <button data-mode="add-drone">+ Drone</button>
-            <select id="place-class" aria-label="Drone class for new drones">
-              <option value="fpv">FPV</option>
-              <option value="mini">Mini</option>
-              <option value="matrice">Matrice-class</option>
-            </select>
+            <div class="add-form">
+              <button data-mode="add-node">Add node</button>
+              <span class="of-type">of type</span>
+              <select id="place-kind" aria-label="Node type for new nodes">
+                <option value="detector">Detector</option>
+                <option value="array">Array</option>
+              </select>
+            </div>
+            <div class="add-form">
+              <button data-mode="add-drone">Add drone</button>
+              <span class="of-type">of type</span>
+              <select id="place-class" aria-label="Drone class for new drones">
+                <option value="fpv">FPV</option>
+                <option value="mini">Mini</option>
+                <option value="matrice">Matrice-class</option>
+              </select>
+            </div>
           </div>
           <div class="group">
-            <button id="open-waterfalls" aria-pressed="false" title="One live waterfall per node">Waterfalls</button>
             <button id="open-whats-real">What's real?</button>
             <button id="open-about">About</button>
           </div>
         </div>
-        <details id="legend" class="panel float">
-          <summary>Real or simulated?</summary>
-          <div id="legend-rows"></div>
-        </details>
+        <button id="pane-toggle" class="panel-toggle panel float" aria-expanded="true" title="Show or hide the object list">Objects</button>
         <div id="help" class="panel float hint">
           Drag nodes and the gateway on the ground. Keys: WASD / arrows move, Q/E down/up, M manual or GPS mode,
           P play/pause, . step, R replay, F follow, T truth, Del remove, Esc close the pop-up.
         </div>
       </main>
       <aside id="inspector" class="panel"></aside>
-      <section id="waterfalls" class="panel" hidden></section>
+      <section id="waterfalls" class="panel"></section>
       <footer id="timeline" class="panel"></footer>
     </div>
+    <dialog id="intro-dialog" class="overlay intro"></dialog>
     <dialog id="about-dialog" class="overlay"></dialog>
     <dialog id="ledger-dialog" class="overlay wide"></dialog>
     <script type="module" src="/src/main.ts"></script>

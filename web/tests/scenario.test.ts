@@ -13,15 +13,14 @@ describe('scenario schema', () => {
     expect(ok).toBe(true);
   });
 
-  it('the example has the demo layout: 13 nodes at 120 m, every third an array, one FPV crossing', () => {
+  it('the example has the demo layout: 13 nodes at 120 m, every third an array, three drones crossing', () => {
     const s = parseScenario(exampleScenario);
     expect(s.nodes).toHaveLength(13);
     const xs = s.nodes.map((n) => n.x);
     for (let i = 1; i < xs.length; i++) expect(xs[i] - xs[i - 1]).toBe(120);
     expect(s.nodes.filter((n) => n.kind === 'array').map((n) => n.id)).toEqual([3, 6, 9, 12]);
     expect(s.gateway.y).toBeLessThan(0);
-    expect(s.drones).toHaveLength(1);
-    expect(s.drones[0].class).toBe('fpv');
+    expect(s.drones.map((d) => d.class)).toEqual(['fpv', 'mini', 'matrice']);
     expect(s.drones[0].path).toMatchObject({ kind: 'crossing', speed_mps: 20, altitude_m: 30 });
   });
 

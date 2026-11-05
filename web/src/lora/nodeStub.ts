@@ -4,12 +4,17 @@ import { createRng, nextFloat, nextU32, type Rng } from '../sim/rng';
 import type { DroneClass } from '../sim/scenario';
 import { gauss } from '../acoustics/dsp';
 import { HEALTH_FIELDS } from '../protocol/messages';
+import type { DetectSpan } from './types';
 
 // Above the demo background, whose 100 ms band level peaked 1.4 dB over the ambient in 600 s across 13 nodes. That
 // background is steady noise only: no wind or sound events, so a real site would need a higher threshold.
 export const DETECTION_THRESHOLD_DB = 2;
 export const DETECTION_RELEASE_DB = 1;
 export const DETECTION_HOLD_S = 0.5;
+// Spans kept for the debug lines; the waterfalls show well under a minute.
+export const MAX_DETECT_SPANS = 8;
+// How far off the stub names a drone, from the first detection range of each class at the 2 dB threshold.
+export const EARSHOT_M: Record<DroneClass, number> = { fpv: 224, mini: 168, matrice: 165 };
 export const RANGE_SIGMA_M = 4;
 export const NLOS_P = 0.25;
 export const NLOS_MAX_M = 12;
@@ -136,6 +141,7 @@ export class NodeStub {
   queue = 0;
   neighboursHeard = 0;
   lastDetectionS = -1;
+  readonly spans: DetectSpan[] = [];
   lastBandDb = 0;
   minBandDb = 255;
 
@@ -163,6 +169,8 @@ export class NodeStub {
           this.aboveSince = -1;
           this.latched = false;
           this.detecting = false;
+          const span = this.spans.at(-1);
+          if (span) span.endS = t;
         }
       }
     } else if (margin >= DETECTION_THRESHOLD_DB) {
@@ -172,6 +180,8 @@ export class NodeStub {
         this.detecting = true;
         this.detections++;
         this.lastDetectionS = t;
+        this.spans.push({ startS: t, endS: null, lineHz: null });
+        if (this.spans.length > MAX_DETECT_SPANS) this.spans.shift();
       }
     } else {
       this.aboveSince = -1;
@@ -192,6 +202,8 @@ export class NodeStub {
     const confidence = clamp(Math.round(4 + snr * 0.6), 0, 15);
     const level = clamp(Math.round(this.lastBandDb), 0, 63);
     const line = CLASS_BPF[target.class] + gauss(this.rng) * 4;
+    const span = this.spans.at(-1);
+    if (span && span.endS === null) span.lineHz = clamp(Math.round(line), 0, 2047);
     return {
       confidence,
       levelDb: level,

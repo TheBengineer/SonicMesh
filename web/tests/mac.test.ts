@@ -53,24 +53,49 @@ describe('LoRa MAC and schedule', () => {
     expect(view.packets.some((p) => p.type === 'RANGING_RESULT')).toBe(true);
   });
 
-  it('a detecting node names its nearest drone, and no drone once it stops detecting', () => {
+  it('a detecting node names the drones in earshot, nearest first, and none once it stops detecting', () => {
     const net = network(scenario.nodes);
     const node = scenario.nodes.find((n) => n.id === 6)!;
     net.setTruth([
       { id: 1, class: 'mini', x: node.x + 2000, y: node.y, alt: 40 },
       { id: 2, class: 'mini', x: node.x + 50, y: node.y, alt: 40 },
     ]);
-    const view = (): { detecting: boolean; targetId: number | null } => net.snapshot().nodes.find((v) => v.id === 6)!;
-    expect(view().targetId).toBeNull();
-    let seen: number | null = null;
+    const view = (): { detecting: boolean; targetIds: number[] } => net.snapshot().nodes.find((v) => v.id === 6)!;
+    expect(view().targetIds).toEqual([]);
+    let seen: number[] = [];
     runSeconds(net, 20, (n, t) => {
       n.observe(6, { bandDb: t <= 5 ? 72 : 40, ambientDb: 40 });
-      if (view().detecting) seen = view().targetId;
+      if (view().detecting) seen = view().targetIds;
     });
-    expect(seen).toBe(2);
+    expect(seen).toEqual([2]);
     expect(view().detecting).toBe(false);
-    expect(view().targetId).toBeNull();
+    expect(view().targetIds).toEqual([]);
+
+    const crowded = network(scenario.nodes);
+    crowded.setTruth([
+      { id: 1, class: 'fpv', x: node.x + 200, y: node.y, alt: 40 },
+      { id: 2, class: 'mini', x: node.x + 50, y: node.y, alt: 40 },
+      { id: 3, class: 'matrice', x: node.x + 300, y: node.y, alt: 40 },
+    ]);
+    runSeconds(crowded, 3, (n) => n.observe(6, { bandDb: 72, ambientDb: 40 }));
+    expect(crowded.snapshot().nodes.find((v) => v.id === 6)?.targetIds).toEqual([2, 1]);
   });
+
+  it('in the example, a node picks up more than one drone at a time', () => {
+    const scn = parseScenario(exampleScenario);
+    const runner = new Runner(scn);
+    const engine = new AcousticEngine(scn, runner.world.terrain, { ringSeconds: 25 });
+    engine.start(runner.world);
+    const most = new Map<number, number>();
+    for (let i = 0; i < 4000; i++) {
+      runner.stepTick();
+      engine.tick(runner.world);
+      runner.lora.observeFromEngine(runner.world, engine);
+      if (i % 50 !== 0) continue;
+      for (const n of runner.lora.snapshot().nodes) most.set(n.id, Math.max(most.get(n.id) ?? 0, n.targetIds.length));
+    }
+    expect(most.get(7)).toBe(3);
+  }, 120_000);
 
   it('a detection switches to event, pauses health and ranging, and returns to idle after 10 s', () => {
     const net = network(scenario.nodes);
@@ -106,7 +131,8 @@ describe('LoRa MAC and schedule', () => {
   });
 
   it('the example scenario produces beacons, ranging, detections and snippets', () => {
-    const scn = parseScenario(exampleScenario);
+    // one drone, so the crossing makes exactly one event
+    const scn = parseScenario({ ...exampleScenario, drones: exampleScenario.drones.slice(0, 1) });
     const runner = new Runner(scn);
     const engine = new AcousticEngine(scn, runner.world.terrain, { ringSeconds: 25 });
     engine.start(runner.world);
@@ -127,7 +153,7 @@ describe('LoRa MAC and schedule', () => {
         const snap = runner.lora.snapshot();
         for (const p of snap.packets) types.add(p.type);
         for (const n of snap.nodes) {
-          expect(n.targetId).toBe(n.detecting ? droneId : null);
+          expect(n.targetIds).toEqual(n.detecting ? [droneId] : []);
           if (n.detecting) linked++;
         }
       }

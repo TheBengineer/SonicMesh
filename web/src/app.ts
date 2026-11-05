@@ -1,6 +1,6 @@
 import exampleScenario from '../scenarios/example.json';
 import { SELF_NOISE_DB } from './acoustics/model';
-import { MicAnalysis } from './audio/analysis';
+import { drawSnippet, MicAnalysis } from './audio/analysis';
 import { Listener } from './audio/listen';
 import { cameraStick, combineSticks, gamepadStick, keyboardStick, quantizeStick, sameStick, zeroStick } from './input/sticks';
 import { COMPONENT } from './provenance/components';
@@ -8,7 +8,7 @@ import { loadLedger, type Ledger } from './provenance/ledger';
 import type { Selection } from './selection';
 import { WorldView, type Hit, type Target, type ViewMode } from './scene/worldView';
 import { drawTraces, type Trace } from './ui/charts';
-import { badgeHtml, download, esc, need, readJson } from './ui/dom';
+import { badgeHtml, download, need, readJson } from './ui/dom';
 import {
   Inspector,
   buildPanel,
@@ -22,8 +22,9 @@ import {
   type InspectView,
   type MessageFilter,
 } from './ui/inspector';
-import { renderAbout, renderLedger } from './ui/overlays';
+import { renderAbout, renderIntro, renderLedger } from './ui/overlays';
 import { Popup } from './ui/popup';
+import { spanAt } from './ui/detectMarks';
 import { WaterfallStrip, type StripNode } from './ui/waterfalls';
 import { Timeline, type TimelineInfo } from './ui/timeline';
 import { parseInputLog, type LogEntry } from './sim/inputs';
@@ -191,7 +192,6 @@ export function startApp(root: HTMLElement): void {
   const host = new SimHost();
   const listener = new Listener(host);
   const view = new WorldView(need<HTMLElement>(root, '#scene'));
-  const legendEl = need<HTMLElement>(root, '#legend-rows');
   const inspectorEl = need<HTMLElement>(root, '#inspector');
   const aboutDialog = need<HTMLDialogElement>(document, '#about-dialog');
   const ledgerDialog = need<HTMLDialogElement>(document, '#ledger-dialog');
@@ -212,11 +212,10 @@ export function startApp(root: HTMLElement): void {
   let messageTimer = 0;
   let lastPolled = zeroStick();
   let lastTarget: number | null = null;
-  let lastLegend = '';
   let lastInspect = '';
   const keysDown = new Set<string>();
   // Node tabs and filters.
-  let nodeTab: InspectTab = 'details';
+  let nodeTab: InspectTab = 'waterfall';
   let msgFilter: MessageFilter = 'all';
   let micPick: string | null = null;
   let overlay = false;
@@ -234,10 +233,28 @@ export function startApp(root: HTMLElement): void {
 
   // Selecting opens the object's window; clearing the selection closes it.
   function select(s: Selection): void {
+    const sameNode = s?.kind === 'node' && selection?.kind === 'node' && s.id === selection.id;
     selection = s;
+    // Clicking a node plays its mic. Pressing and releasing both select, so only a change of node restarts it.
+    if (sameNode) listener.wake();
+    else if (s?.kind === 'node') startListening(waterfallMic() ?? `${s.id}.0`);
+    else if (listenKey !== null) stopListening();
     if (viewMode === 'follow' && s?.kind === 'drone') view.setView('follow', s.id);
     if (s === null) popup.close();
     else if (!popup.isOpen) popup.show(view.screenPos(s));
+  }
+
+  function startListening(key: string): void {
+    listenKey = key;
+    listener.start(key).catch((err: unknown) => {
+      if (listenKey === key) listenKey = null;
+      flash(errorText(err));
+    });
+  }
+
+  function stopListening(): void {
+    listener.stop();
+    listenKey = null;
   }
 
   function setViewMode(v: ViewMode, smooth = false): void {
@@ -333,7 +350,7 @@ export function startApp(root: HTMLElement): void {
   }
 
   function listenNote(): string {
-    if (listenKey === null) return 'Press Listen. The browser needs one click before it can play sound.';
+    if (listenKey === null) return 'Not listening. Clicking a node plays its mic, or press the button above.';
     const f = frameNow();
     if (f.speed !== 1 || !f.playing) {
       return `Muted: audio plays only at 1× while the sim runs (now ${f.speed}×${f.playing ? '' : ', paused'}).`;
@@ -412,21 +429,14 @@ export function startApp(root: HTMLElement): void {
         break;
       case 'mic-select':
         micPick = value;
+        if (listenKey !== null) startListening(value);
         break;
       case 'overlay':
         overlay = !overlay;
         break;
       case 'listen': {
-        if (listenKey === value) {
-          listener.stop();
-          listenKey = null;
-          break;
-        }
-        listenKey = value;
-        listener.start(value).catch((err: unknown) => {
-          listenKey = null;
-          flash(errorText(err));
-        });
+        if (listenKey === value) stopListening();
+        else startListening(value);
         break;
       }
       case 'listen-gain':
@@ -447,11 +457,11 @@ export function startApp(root: HTMLElement): void {
   });
   const popupInspector = new Inspector(popup.body, onAction);
   const waterfallsEl = need<HTMLElement>(root, '#waterfalls');
-  const waterfallButton = need<HTMLButtonElement>(root, '#open-waterfalls');
   const strip = new WaterfallStrip(waterfallsEl, badgeHtml(ledger.byId.get(COMPONENT.waterfall)), (id) => {
     select({ kind: 'node', id });
     refresh();
   });
+  const waterfallToggle = need<HTMLButtonElement>(waterfallsEl, '.wf-toggle');
   const timeline = new Timeline(need<HTMLElement>(root, '#timeline'), {
     togglePlay,
     step: () => host.step(),
@@ -620,8 +630,10 @@ export function startApp(root: HTMLElement): void {
     if (mic && ring && wf) {
       if (!analysis || analysis.key !== mic) analysis = new MicAnalysis(mic);
       const lines = f.truth && f.truth.key === mic && f.state.truth ? f.truth.lines.map((l) => l.hz) : null;
-      analysis.update(ring, lines);
+      const nodeView = f.lora?.nodes.find((n) => selection?.kind === 'node' && n.id === selection.id);
+      analysis.update(ring, lines, nodeView?.detecting ?? false);
       analysis.drawWaterfall(wf, overlay && lines !== null);
+      analysis.drawMarks(wf, nodeView?.detectSpans ?? [], f.simTimeS);
       const level = body.querySelector<HTMLCanvasElement>('canvas[data-plot="level"]');
       if (level) {
         const band = analysis.bandDb();
@@ -629,6 +641,16 @@ export function startApp(root: HTMLElement): void {
         const traces: Trace[] = [{ label: 'band', color: BAND_COLOR, values: band }];
         if (floor !== null) traces.push({ label: 'SNR', color: SNR_COLOR, values: band.map((b) => b - floor), dashed: true });
         drawTraces(level, traces, { unit: 'dB', xLabel: 'last 10 s' });
+      }
+    }
+    const clip = body.querySelector<HTMLCanvasElement>('canvas[data-plot="snippet"]');
+    if (clip && !clip.dataset.drawn && selection?.kind === 'packet') {
+      const id = selection.id;
+      const packet = f.lora?.packets.find((p) => p.id === id);
+      if (packet?.message.type === 'SNIPPET') {
+        const spans = f.lora?.nodes.find((n) => n.id === packet.tx)?.detectSpans ?? [];
+        drawSnippet(clip, packet.message.data, spanAt(spans, packet.startS)?.lineHz ?? null);
+        clip.dataset.drawn = '1';
       }
     }
     const rotors = body.querySelector<HTMLCanvasElement>('canvas[data-plot="rotors"]');
@@ -642,8 +664,8 @@ export function startApp(root: HTMLElement): void {
   // Shows or hides the strip. Opening it asks the worker for the node mics; closing it drops the analysis.
   function setWaterfalls(on: boolean): void {
     wfOpen = on;
-    waterfallsEl.hidden = !on;
-    waterfallButton.setAttribute('aria-pressed', String(on));
+    waterfallsEl.classList.toggle('collapsed', !on);
+    waterfallToggle.setAttribute('aria-expanded', String(on));
     if (!on) strip.clear();
     refresh();
   }
@@ -654,29 +676,23 @@ export function startApp(root: HTMLElement): void {
       kind: n.kind,
       mic: micKeysOf(n)[0],
       detecting: f.lora?.nodes.find((v) => v.id === n.id)?.detecting ?? false,
+      spans: f.lora?.nodes.find((v) => v.id === n.id)?.detectSpans ?? [],
+      listening: listenKey !== null && micKeysOf(n).includes(listenKey),
     }));
-    strip.update(nodes, selection?.kind === 'node' ? selection.id : null, (key) => host.ring(key));
+    strip.update(nodes, selection?.kind === 'node' ? selection.id : null, f.simTimeS, (key) => host.ring(key));
   }
 
   function refresh(): void {
     const f = frameNow();
     const world = worldNow();
     if (selection && !selectionExists(world, selection)) select(null);
-    const ctx: InspectContext = { world, selection, ledger, view: inspectView(), lora: f.lora };
+    const ctx: InspectContext = { world, selection, view: inspectView(), lora: f.lora };
     objects.update(objectList(ctx));
     if (selection) {
       popupInspector.update(buildPanel(ctx));
       popup.setTitle(objectTitle(world, selection));
     }
-    const present = presentIds(world, scenario);
-    const legend = ledger.entries
-      .filter((e) => present.has(e.id))
-      .map((e) => `<div class="legend-row">${badgeHtml(e)} ${esc(e.name)}</div>`)
-      .join('');
-    if (legend !== lastLegend) {
-      lastLegend = legend;
-      legendEl.innerHTML = legend;
-    }
+    root.classList.toggle('audio-muted', !f.playing || f.speed !== 1);
     timeline.update(timelineInfo(f, terrain.seed, selection?.kind === 'packet' ? selection.id : null), message);
     syncInspect();
   }
@@ -707,8 +723,19 @@ export function startApp(root: HTMLElement): void {
     requestAnimationFrame(frame);
   }
 
-  waterfallButton.addEventListener('click', () => setWaterfalls(!wfOpen));
+  waterfallToggle.addEventListener('click', () => setWaterfalls(!wfOpen));
+  const paneToggle = need<HTMLButtonElement>(root, '#pane-toggle');
+  paneToggle.addEventListener('click', () => {
+    const open = root.classList.toggle('pane-closed');
+    paneToggle.setAttribute('aria-expanded', String(!open));
+  });
   setViewMode('orbit');
-  refresh();
+  setWaterfalls(true);
   requestAnimationFrame(frame);
+
+  const intro = need<HTMLDialogElement>(document.body, '#intro-dialog');
+  renderIntro(intro, () => {
+    if (!frameNow().playing) togglePlay();
+  });
+  intro.showModal();
 }

@@ -25,9 +25,9 @@ const FATE_CSS: Record<string, string> = {
 };
 const PACKET_SECONDS = 1;
 
-// Marker sizes: every object is drawn 3x and always has a ring; the selected one is 10x.
+// Marker sizes: every object is drawn 3x and always has a ring; the selected one is 5x.
 const ICON_SCALE = 3;
-const SELECTED_SCALE = 10;
+const SELECTED_SCALE = 5;
 const RING_SELECTED = 0xffe066;
 const RING_COLOR = { detector: 0x4aa3ff, array: 0xff9f43, gateway: 0x3ddc84, drone: 0xff4d6d } as const;
 const DETECT_LINE = 0x5fb4ff; // --accent in style.css
@@ -49,7 +49,8 @@ function fateCss(fate: string): string {
 
 export type ViewMode = 'orbit' | 'follow' | 'top';
 
-const FOLLOW_OFFSET = new THREE.Vector3(0, 60, 150);
+// Far enough back to keep several nodes in view; the example line has one every 120 m.
+const FOLLOW_OFFSET = new THREE.Vector3(0, 204, 504);
 // Camera start points for a terrain REF_TERRAIN_M wide; other sizes scale from these.
 const REF_TERRAIN_M = 2000;
 const TOP_HEIGHT_M = 1700;
@@ -456,19 +457,21 @@ export class WorldView {
     this.updateDetections(world, state, lora);
   }
 
-  // A straight line from each detecting node to the drone it detects.
+  // A straight line from each detecting node to every drone it detects.
   private updateDetections(world: World, state: WorldState, lora: LoraView | null): void {
     disposeGroup(this.detectGroup);
     this.detectGroup.clear();
     if (!lora) return;
     for (const v of lora.nodes) {
-      const d = state.drones.find((o) => o.id === v.targetId);
-      if (!d) continue;
-      const a = this.packetPos(v.id, state, world.terrain);
-      const b = toScene(d.x, d.y, d.alt);
-      const geo = new LineGeometry().setPositions([a.x, a.y, a.z, b.x, b.y, b.z]);
-      // A plain WebGL line is always 1 pixel wide. Line2 keeps this width at any distance.
-      this.detectGroup.add(new Line2(geo, new LineMaterial({ color: DETECT_LINE, linewidth: DETECT_LINE_PX })));
+      for (const id of v.targetIds) {
+        const d = state.drones.find((o) => o.id === id);
+        if (!d) continue;
+        const a = this.packetPos(v.id, state, world.terrain);
+        const b = toScene(d.x, d.y, d.alt);
+        const geo = new LineGeometry().setPositions([a.x, a.y, a.z, b.x, b.y, b.z]);
+        // A plain WebGL line is always 1 pixel wide. Line2 keeps this width at any distance.
+        this.detectGroup.add(new Line2(geo, new LineMaterial({ color: DETECT_LINE, linewidth: DETECT_LINE_PX })));
+      }
     }
   }
 
@@ -618,12 +621,14 @@ export class WorldView {
       ctx.lineWidth = DETECT_LINE_PX;
       for (const v of lora.nodes) {
         const n = state.nodes.find((o) => o.id === v.id);
-        const d = state.drones.find((o) => o.id === v.targetId);
-        if (!n || !d) continue;
-        ctx.beginPath();
-        ctx.moveTo(sx(n.x), sy(n.y));
-        ctx.lineTo(sx(d.x), sy(d.y));
-        ctx.stroke();
+        for (const id of v.targetIds) {
+          const d = state.drones.find((o) => o.id === id);
+          if (!n || !d) continue;
+          ctx.beginPath();
+          ctx.moveTo(sx(n.x), sy(n.y));
+          ctx.lineTo(sx(d.x), sy(d.y));
+          ctx.stroke();
+        }
       }
     }
 

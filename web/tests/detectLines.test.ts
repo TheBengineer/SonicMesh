@@ -16,18 +16,18 @@ const state = {
 };
 
 // The renderer needs WebGL, so this runs the drawing step alone on a real scene group.
-function linesFor(nodes: { id: number; targetId: number | null }[]): Line2[] {
+function linesFor(nodes: { id: number; targetIds: number[] }[], world = state): Line2[] {
   const proto = WorldView.prototype as unknown as Record<string, (...a: unknown[]) => void>;
   const self = { detectGroup: new THREE.Group(), packetPos: proto.packetPos };
-  proto.updateDetections.call(self, { terrain }, state, { nodes });
+  proto.updateDetections.call(self, { terrain }, world, { nodes });
   return self.detectGroup.children as Line2[];
 }
 
 describe('detection lines in the 3D view', () => {
   it('run from the detecting node to the drone, thick and in the accent blue', () => {
     const lines = linesFor([
-      { id: 1, targetId: 5 },
-      { id: 2, targetId: null },
+      { id: 1, targetIds: [5] },
+      { id: 2, targetIds: [] },
     ]);
     expect(lines).toHaveLength(1);
     const geo = lines[0].geometry;
@@ -40,8 +40,13 @@ describe('detection lines in the 3D view', () => {
     expect(mat.linewidth).toBeGreaterThan(1);
   });
 
+  it('go to every drone a node detects', () => {
+    const two = { ...state, drones: [...state.drones, { id: 6, x: -50, y: 20, alt: 40 }] };
+    expect(linesFor([{ id: 1, targetIds: [5, 6] }], two)).toHaveLength(2);
+  });
+
   it('are gone when the drone is gone', () => {
-    expect(linesFor([{ id: 1, targetId: 9 }])).toHaveLength(0);
+    expect(linesFor([{ id: 1, targetIds: [9] }])).toHaveLength(0);
   });
 });
 

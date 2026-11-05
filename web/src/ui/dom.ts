@@ -34,3 +34,6 @@ export function download(name: string, data: unknown): void {
 export async function readJson(file: File): Promise<unknown> {
   return JSON.parse(await file.text()) as unknown;
 }
+
+// Marks the plot of the mic being played. It dims while the audio is muted.
+export const SPEAKER_ICON = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M2 6v4h2.5L8 13V3L4.5 6z"/><path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" d="M10.2 5.6a3.2 3.2 0 0 1 0 4.8M12 3.8a5.6 5.6 0 0 1 0 8.4"/></svg>';
