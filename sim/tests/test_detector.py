@@ -66,3 +66,72 @@ def test_no_detection_in_10_min_pink_and_wind():
     x = pink(rng, n, 50.0) + wind(rng, n, 4.0)
     r = Detector(Params()).run(x)
     assert r["on"].sum() == 0
+
+
+def test_gap_tolerance_keeps_age_across_a_short_dropout():
+    from detector.detector import GRID, Track
+
+    def run(gap, dropout):
+        p = Params(theta=0.1, gap_frames=gap, use_harm=False)  # no spectrum in this unit test
+        tr = Track()
+        S = np.zeros(GRID, np.float32)
+        W = np.zeros(257)
+        S[100] = 0.3
+        for _ in range(20):  # track acquired and well established (age 20)
+            tr.update(S, W, p)
+        for _ in range(dropout):  # no hits; the 16-frame persistence buffer alone does not reset the age
+            S[100] = 0.0
+            tr.update(S, W, p)
+        S[100] = 0.3
+        tr.update(S, W, p)  # re-found at the same f0
+        return tr.age
+
+    # a 25-frame dropout resets the age in the baseline (the persistence buffer runs out) ...
+    assert run(0, 25) <= 2
+    # ... but with a 31-frame gap, the same source is re-found within the gap and keeps its age
+    assert run(31, 25) > 20
+    # a dropout longer than the gap restarts the age
+    assert run(31, 60) <= 2
+
+
+def test_startup_cap_keeps_a_line_present_at_start_up_out_of_the_floor():
+    from detector.detector import Detector, LO_BIN, NB
+
+    det_a = Detector(Params(theta=0.1))
+    det_b = Detector(Params(theta=0.1, init_env_bins=16))
+    base = np.full(NB, 1e-9)
+    line_bin = 200
+    base[line_bin] = 1e-5  # a line far above the noise at every start-up frame
+    for det in (det_a, det_b):
+        for _ in range(9):
+            det.comb_batch(base[None, :].copy())
+    floor_a = det_a.floor[line_bin]
+    floor_b = det_b.floor[line_bin]
+    neighbour = det_b.floor[line_bin + 40]
+    assert floor_a > neighbour + 20  # baseline learns the line into the floor
+    assert abs(floor_b - neighbour) < 1.0  # capped at the local median
+    assert LO_BIN < line_bin
+
+
+def test_gate_harm_lets_a_buried_fundamental_pass_on_its_second_harmonic():
+    from detector.detector import DF, F0, LO_BIN, NB, Detector
+
+    f0_hz = 250.0
+    k = int(round(f0_hz / DF))
+    P = np.full(NB, 1e-9)
+    for h in range(2, 11):  # harmonics 2..10 stand 20 dB above the floor; the fundamental is not above it
+        P[int(round(h * f0_hz / DF))] = 1e-7
+    grid = int(np.argmin(np.abs(F0 - f0_hz)))
+    base = np.full(NB, 1e-9)  # start-up is noise only, so the floor does not learn the lines
+    scores = {}
+    for gh in (1, 2):
+        det = Detector(Params(theta=0.1, gate_harm=gh))
+        for _ in range(9):
+            det.comb_batch(base[None, :].copy())
+        S = None
+        for _ in range(12):
+            S, _, ok = det.comb_batch(P[None, :].copy())
+        scores[gh] = float(S[0, grid]) if ok[0] else 0.0
+    assert scores[1] == 0.0
+    assert scores[2] > 0.0
+    assert k > LO_BIN

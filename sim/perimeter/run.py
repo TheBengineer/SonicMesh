@@ -68,6 +68,13 @@ FA_TARGET_PER_KM_DAY = 1.0
 # Chosen on folds 1-3 (--tune): the highest gateway Pd below 100 m with no more than 1 per km per day in the 39
 # node-hour dev bed (point estimate). Grid edge: 0.10 is the lowest theta tried.
 CHOSEN = Params(theta=0.10)
+# Held-out seeds. "held" is the set used for the first held-out run (folds 4-5, doc 07 section 6). "fresh" uses seeds
+# never used by any earlier run (crossings, background master and false-alarm draws). Both sets use folds 4-5 clips:
+# ESC-50 has five folds, so the clips themselves are not fresh.
+SEEDS = {
+    "held": dict(cross=4040, master=7777, fa_rural=4000, fa_dense=5000),
+    "fresh": dict(cross=5050, master=8888, fa_rural=8000, fa_dense=9000),
+}
 THETAS = [0.10, 0.12, 0.14, 0.16, 0.18, 0.20, 0.23, 0.26, 0.30]
 # Node-to-node timing model (ASSUMED, from docs/protocol-v0.md 3a). Event superframe 500 ms, idle 4 s, backbone 500 ms
 # with a 38.5 ms message; AIR_S is an assumed DETECT airtime and CTRL_S an assumed controller processing time.
@@ -168,6 +175,7 @@ def run_crossing(c, master, params_list):
     tk = tr["t"]
     src = drone_source(c["cls"], np.ones(len(tk) * TICK_SAMPLES), rng=np.random.default_rng(c["seed"]),
                        wobble=True, broadband=True)
+    src = src * 10 ** (c.get("gain_db", 0.0) / 20)  # source level offset in dB (0 for every reported run)
     src_pad = padded(src, int(PAD_S * FS))
     truth = np.flatnonzero(lateral(tr) <= TRUTH_M)
     if truth.size == 0:
@@ -374,12 +382,13 @@ def ablate(args, master):
 def held_out_crossings(args, master):
     """Crossings on the held-out background (folds 4-5), gateway and node Pd, and the node-to-node timing."""
     n_cross = args.crossings or 240
+    seeds = SEEDS[args.seeds]
     t0 = time.time()
     print(f"HELD-OUT folds 4-5, chosen theta {CHOSEN.theta}: {n_cross} crossings", flush=True)
     res = []
     lat_event, lat_idle = [], []
     rng_lat = np.random.default_rng(99)
-    for r in map_crossings(sample_crossings(n_cross, seed=4040), master, [CHOSEN]):
+    for r in map_crossings(sample_crossings(n_cross, seed=seeds["cross"]), master, [CHOSEN]):
         if r:
             x = r[0]
             res.append(x)
@@ -424,9 +433,10 @@ def held_out_fa(args):
     """Background-only false alarms on the held-out folds 4-5: rural bed and dense stress bed, chosen setting."""
     hours = args.hours or 6.0
     dense_hours = args.dense_hours or 0.5
+    seeds = SEEDS[args.seeds]
     out = {}
     t0 = time.time()
-    rural = fa.scene_alarms("rural", [CHOSEN], hours, (4, 5), seed=4000, nodes=NODES)[0]
+    rural = fa.scene_alarms("rural", [CHOSEN], hours, (4, 5), seed=seeds["fa_rural"], nodes=NODES)[0]
     fr = fa_rates(rural, hours)
     fr["upper95_per_km_day"] = upper_bound_per_km_day(fr["gateway_alarms"], hours)
     cats = {}
@@ -441,7 +451,7 @@ def held_out_fa(args):
           flush=True)
     print("  node alarms by sound class:", sorted(cats.items(), key=lambda kv: -kv[1]), flush=True)
     t0 = time.time()
-    dense = fa.scene_alarms("dense", [CHOSEN], dense_hours, (4, 5), seed=5000, nodes=NODES)[0]
+    dense = fa.scene_alarms("dense", [CHOSEN], dense_hours, (4, 5), seed=seeds["fa_dense"], nodes=NODES)[0]
     fd = fa_rates(dense, dense_hours)
     fd["upper95_per_km_day"] = upper_bound_per_km_day(fd["gateway_alarms"], dense_hours)
     out["dense"] = fd
@@ -473,6 +483,8 @@ def main():
     ap.add_argument("--dense-hours", type=float, default=None)
     ap.add_argument("--part", default="all", choices=["all", "crossings", "fa"],
                     help="held-out mode only: crossings (Pd and timing) or fa (false alarms), separately")
+    ap.add_argument("--seeds", default="held", choices=sorted(SEEDS),
+                    help="held-out mode only: held (first held-out run) or fresh (new seeds, doc 07 section 9)")
     ap.add_argument("--json", default=None)
     args = ap.parse_args()
     if args.quick:
@@ -483,7 +495,7 @@ def main():
         master, _ = rural_scene(1234, 0.25, (1, 2, 3))  # background events from folds 1-3 only
         out = tune(args, master) if args.tune else ablate(args, master)
     else:
-        master, _ = rural_scene(7777, 0.25, (4, 5))
+        master, _ = rural_scene(SEEDS[args.seeds]["master"], 0.25, (4, 5))
         out = held_out(args, master)
     if args.json:
         Path(args.json).write_text(json.dumps(out, indent=1, default=float))

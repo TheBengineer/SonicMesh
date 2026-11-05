@@ -12,7 +12,9 @@ detector [`sim/detector/detector.py`](../../sim/detector/detector.py), gateway r
 far off is it?
 
 **Short answer: no.** The exit criteria are not met. The best setting found detects about 1 crossing in 5 below
-100 m on the held-out folds, and the false-alarm rate is not yet bounded below 1 per km per day.
+100 m on the held-out folds, and the false-alarm rate is not yet bounded below 1 per km per day. Round 2 (section 10,
+2026-11-05) finds the cause of the mini and matrice losses in the rural bed (the ambient level, not the events) and
+tests detector changes; none meets the criteria, and the fresh-data result is no better than the first held-out run.
 
 ## Answers in brief
 
@@ -20,10 +22,16 @@ far off is it?
    crossings); node-level Pd below 100 m is **62%**. The 95% target is not close. Pd falls with wind for FPV
    (below 50 m: 88% at 0-2 m/s, 31% at 5-8 m/s). Mini and matrice were **never** detected at the gateway below
    100 m (0 of 62 and 0 of 61); FPV was detected in 36 of 76.
-2. **Cause of the node misses: the 2-second track-age gate.** Removing it raises node Pd below 100 m from 0.68 to
-   0.95 and gateway Pd from 0.19 to 0.57 (folds 1-3). The other rejection steps (harmonicity, good-frac, impulse)
+2. **Cause of the node misses: the 2-second track-age gate (round 1), and for mini and matrice the pink ambient
+   (round 2, section 10.1).** Round 2 splits the rural bed: pink ambient alone takes mini and matrice node Pd from
+   about 1.0 to 0.2-0.25 at the ASSUMED 40 dB SPL; events alone have no measurable effect. The effect is steep in the
+   ambient level (30 dB: node Pd 0.78 and 0.94; 50 dB: 0.03 and 0.00). Removing the age gate in round 1 raised node Pd
+   below 100 m from 0.68 to 0.95 and gateway Pd from 0.19 to 0.57 (folds 1-3). The other rejection steps (harmonicity, good-frac, impulse)
    change Pd by 0.05 or less. Removing the gate does not reach the target either: gateway Pd stops at 0.57. A
    +6 dB source level on mini and matrice moves their gateway Pd only from 0 to 0.04 (folds 1-3, small samples).
+   Round 2 answer (section 10.3): +6 dB raises node Pd (mini 0.28 to 0.50; matrice 0.22 to 0.47 in the layer test)
+   but a gateway pair needs both nodes and an f0 match, and most both-detect pairs fail the f0 match. Doppler does not
+   explain those pairs.
    Mini and matrice comb scores are low in the rural bed, and their tracks break before 2 s (section 2). The age
    gate is also what keeps false alarms down: without it there are 2,287 node alarms per node-day on the rural bed.
 3. **Gateway rule: two real errors.** The 10 s pair window rejects most true adjacent-node pairs (the median gap
@@ -40,10 +48,15 @@ far off is it?
    alarms (34 per node-day), one gateway alarm: **0.95 per km-day, 95% upper bound 4.5 per km-day**. Zero events
    would bound it at 2.9 per km-day. Showing <= 1 per km-day with zero events needs **223 node-hours** (17.1 line
    hours); that did not fit the time budget. The dense ESC stress bed gives 549 gateway alarms per km-day.
-6. **Node-to-node across the A|B boundary (ASSUMED timing model).** Median wait after the later onset falls from
+6. **Round 2 detector trials (folds 1-3, 13 node-hours).** Gap-tolerant age, lower theta, floor gate 3 dB, slower
+   floor rise, start-up cap, and fundamental-or-second-harmonic gate: none raises gateway Pd without a large
+   false-alarm cost (table in section 10.4). Fresh held-out (new seeds, folds 4-5 clips): gateway Pd below 100 m 0.16
+   (31 of 196); rural false alarms 1.9 per km-day on 78 node-hours (95% upper bound 6.0). Round 1 held-out: 0.95 (bound
+   4.5). Pooled 156 node-hours: 1.4 per km-day (bound 3.7). Targets not met.
+7. **Node-to-node across the A|B boundary (ASSUMED timing model).** Median wait after the later onset falls from
    0.62 s to 0.31 s in event mode, and from 2.26 s to 2.09 s in idle mode (15 boundary pairs). Measured from the
    drone entering 400 m, both are about 29 s, so detection dominates and the network step is small.
-7. **Real-audio checks.** Direct DroneNoise clips: Matrice on at 6 of 9 mics, Mini 3 Pro on at 8 of 9. The Mini's
+8. **Real-audio checks.** Direct DroneNoise clips: Matrice on at 6 of 9 mics, Mini 3 Pro on at 8 of 9. The Mini's
    f0 sits at about twice the centre-mic line on most mics. Propagated real sources cannot be separated from the bed
    alone: a 50 dB bed with no drone triggers at the source's f0 in 30-60% of 60 s trials (10 trials).
 
@@ -122,7 +135,8 @@ gateway 10 s and exact f0, theta 0.12; per-crossing diagnostic, not part of the 
   gain, and it broke the existing 0 dB mini test (the track locked on a third-harmonic sub-multiple). Default kept
   at 1.0. The parameter stays in the code with the test that exercises it.
 - *Source level +6 dB for mini and matrice* (ASSUMED levels, folds 1-3, theta 0.10): mini gateway Pd 0 to 0.04 (n = 25), matrice
-  0 to 0 (n = 34), FPV 0.49 (n = 37). The level is not what limits mini and matrice.
+  0 to 0 (n = 34), FPV 0.49 (n = 37). Level does limit node detection, and section 10 measures that; at the gateway
+  the f0 match limits it as well, which is why this gateway figure moves so little.
 
 **Which layer breaks mini and matrice (exploration, not part of the repo).** One geometry only: 30 m altitude, 15 m/s,
 perpendicular pass, 8 node-passes per row, theta 0.10, rural bed from folds 1-3. Values are medians within 300 m of
@@ -323,6 +337,240 @@ uv run sim/perimeter/real_checks.py --trials 10                  # about 14 min
 
 Two runs of `--part crossings` and `--part fa` ran at the same time, so the times are with contention on a
 32-core machine.
+
+## 10. Round 2, 2026-11-05: bed split, ambient check, source level, detector trials, fresh held-out
+
+Scope as set in the round-2 brief. Everything below is measured with the scripts named here; ASSUMED values are tagged.
+The detector's default settings did not change. Every new detector option defaults to the baseline behaviour, and the
+baseline reproduces the section 4 numbers (theta 0.10 on folds 1-3: node Pd 0.68, gateway Pd 0.19).
+
+### 10.1 Which part of the rural bed does the damage (step 1)
+
+`uv run sim/perimeter/bed_layers.py --passes 4`: one node, one pass per row, 9 geometries (altitude 20, 50 or 90 m by
+speed 5, 15 or 25 m/s), 4 passes each, so 36 node-passes per row per class. Folds 1-3 only (the diagnosis folds).
+Crossing offset from the node is one of -150, -50, 50 or 150 m, seeded per pass. Measured within 300 m of the node.
+Pink ambient (ASSUMED 40 dB SPL, band 100 Hz to 4 kHz) and events (rural scene draws, with the ambient switched off)
+are separate layers. The "full" row is pink + events + 2 m/s wind, as in the round-1 rural bed.
+
+| Class | Row | Median max track age (gate 62) | Node Pd | Frames on | Median best comb (theta 0.10) | Comb at true f0 | Line-to-floor, dB | Floor rise at harmonics, dB |
+|---|---|---|---|---|---|---|---|---|
+| FPV | propagation only | 435 | 1.00 | 0.99 | 0.636 | 0.197 | 18.5 | 1.85 |
+| FPV | + turbulence | 329 | 1.00 | 0.96 | 0.658 | 0.215 | 18.3 | 2.50 |
+| FPV | + pink | 276 | 0.89 | 0.70 | 0.272 | 0.000 | 6.6 | 0.87 |
+| FPV | + events | 332 | 1.00 | 0.96 | 0.652 | 0.215 | 18.3 | 2.59 |
+| FPV | + pink + events + wind | 280 | 0.83 | 0.63 | 0.274 | 0.000 | 6.6 | 0.75 |
+| FPV | wind only | 490 | 1.00 | 0.99 | 0.651 | 0.237 | 17.5 | 2.25 |
+| Mini | propagation only | 190 | 0.97 | 0.71 | 0.373 | 0.141 | 12.7 | 2.10 |
+| Mini | + turbulence | 184 | 1.00 | 0.81 | 0.388 | 0.146 | 13.2 | 2.62 |
+| Mini | + pink | 28 | 0.22 | 0.09 | 0.104 | 0.000 | 4.2 | 0.91 |
+| Mini | + events | 210 | 0.97 | 0.80 | 0.390 | 0.141 | 12.6 | 2.62 |
+| Mini | + pink + events | 32 | 0.31 | 0.15 | 0.104 | 0.000 | 4.2 | 0.89 |
+| Mini | + pink + events + wind | 36 | 0.28 | 0.13 | 0.114 | 0.000 | 4.2 | 0.86 |
+| Mini | wind only | 168 | 0.97 | 0.84 | 0.375 | 0.000 | 10.7 | 2.60 |
+| Matrice | propagation only | 309 | 1.00 | 0.91 | 0.254 | 0.186 | 7.5 | 2.42 |
+| Matrice | + turbulence | 493 | 1.00 | 0.94 | 0.279 | 0.207 | 10.2 | 3.18 |
+| Matrice | + pink | 30 | 0.25 | 0.13 | 0.105 | 0.051 | 3.8 | 0.70 |
+| Matrice | + events | 490 | 1.00 | 0.93 | 0.279 | 0.197 | 9.5 | 3.12 |
+| Matrice | + pink + events | 36 | 0.31 | 0.15 | 0.106 | 0.051 | 3.9 | 0.78 |
+| Matrice | + pink + events + wind | 20 | 0.22 | 0.10 | 0.091 | 0.000 | 3.5 | 1.02 |
+| Matrice | wind only | 144 | 0.86 | 0.58 | 0.189 | 0.000 | 5.4 | 2.85 |
+
+Node Pd is the share of passes with the track on at any time within 300 m. "Comb at true f0" and "line-to-floor" use
+the class's blade-pass frequency from the simulation, as a diagnostic only; the detector never sees it.
+
+Reading the table:
+
+- **Pink ambient is the damage. Events are not.** Events alone change nothing measurable for any class (node Pd within
+  0.03 of turbulence alone). Pink alone takes mini and matrice node Pd from about 1.0 to 0.2-0.25 and drops the median
+  best score to the threshold (0.10). FPV falls less (node Pd 0.89) because its best score stays at 2.7 times the
+  threshold.
+- **Wind costs less.** Wind alone keeps mini node Pd at 0.97 and matrice at 0.86 (on 0.58), so it is not the main
+  cause.
+- **Why pink.** Pink noise falls with frequency (about -3 dB per octave), so its noise is strongest in the bins at the
+  mini and matrice fundamentals (250 and 100 Hz). The comb's fundamental gate (`GATE_LOG`: the fundamental must stand
+  3 dB above its flanks) then zeroes the score at the true f0 in most frames (the median comb at the true f0 is 0.000
+  with pink). The score that survives sits at the threshold. The line-to-floor ratio falls by 6 to 12 dB in every
+  class. FPV loses the most in dB and still survives, so the class differences appear to follow the margin over the
+  threshold rather than the line-to-floor ratio alone.
+- **The floor tracker does not absorb more under pink.** The floor rise at the harmonic bins is 0.7 to 0.9 dB with
+  pink and 1.9 to 3.2 dB without it. Without a bed the tracker does absorb a few dB of line (rows "propagation only" and
+  "+ turbulence"), but pink does not make that worse. Pink sets the floor; the tracker is not the cause.
+- **The result depends on the ASSUMED 40 dB.** Same layer test, pink ambient alone (`--ambient-db`, mini and matrice,
+  36 node-passes per cell):
+
+| Pink ambient (ASSUMED) | Mini node Pd | Mini median age | Matrice node Pd | Matrice median age |
+|---|---|---|---|---|
+| none (turbulence only) | 1.00 | 184 | 1.00 | 493 |
+| 30 dB SPL | 0.78 | 87 | 0.94 | 181 |
+| 40 dB SPL (assumed, used everywhere else) | 0.22 | 28 | 0.25 | 30 |
+| 50 dB SPL | 0.03 | 8 | 0.00 | 9 |
+
+  Across this range node Pd falls from about 0.9 to about 0 for a 10 dB change in the bed. The rural bed's cost is
+  almost entirely inside that range, so the bed's level has to be measured before the cost can be trusted. Section
+  10.2 explains why the level was not changed.
+
+### 10.2 The ambient assumption against local data (step 2)
+
+`uv run sim/perimeter/ambient_check.py`. Outdoor ESC-50 clips in `data/backgrounds/esc50` (1,240 clips, all five folds;
+CC BY-NC 3.0, local use only; numbers only, no audio in the repo).
+
+| Quantity | Result |
+|---|---|
+| Quietest 2 s band level (100 Hz to 4 kHz), dBFS | median -28.3; 10th to 90th percentile -68.2 to -16.6 |
+| Loudest 2 s band level, dBFS | median -20.4 |
+| Quiet-to-loud range, dB | median 4.4; 10th to 90th percentile 0.9 to 43.7 |
+| Spectral slope of the quietest 2 s, dB per octave | median -4.08; 10th to 90th percentile -8.6 to +0.25 (pink -3.0) |
+| Share of quiet sections in the pink range (-4.5 to -1.5 dB/oct) | 0.28 |
+
+What this supports and does not:
+
+- **The absolute level is not tested.** The clips are normalised and carry no calibration, so dBFS cannot be turned into
+  dB SPL. No local file gives a calibrated ambient, so the 40 dB SPL (ASSUMED) is neither confirmed nor refuted. The only
+  calibrated-looking material, the DroneNoise hover recordings, depends on the ASSUMED x10 factor (section 7).
+- **The spectral shape is steeper than the sim's pink.** The median quiet section falls about -4 dB per octave, against
+  -3 for the sim's pink, with a wide spread. For a fixed total level, a steeper slope puts more relative energy at
+  100 to 300 Hz, where the mini and matrice fundamentals sit. If the total is right, the sim's pink under-weights the
+  low band, so the sim may be optimistic about mini and matrice. This is a shape argument from ESC-50 quiet sections
+  (which include wind and traffic rumble), not a measurement of rural ambient.
+- **The quiet-to-loud ratio does not test the event levels.** The sim puts events 10 to 14 dB above the ambient at 20 m
+  and 10 dB below it at 300 m (ASSUMED). The clips show a median loud-to-quiet range of 4.4 dB, but ESC-50 clips are not
+  recordings of events at fixed distances, so this does not settle the event-to-ambient ratio either.
+- **Decision.** The ambient is not changed. Nothing in the data justifies a new level, and the sensitivity in section 10.1
+  is larger than any change the data could support. Results are reported at the assumed 40 dB, with the 30 and 50 dB
+  sensitivity above.
+
+### 10.3 Why +6 dB barely moved gateway Pd (step 3)
+
+`uv run sim/perimeter/level_check.py --crossings 40` and `uv run sim/perimeter/pair_check.py --crossings 40`.
+Crossings below 100 m, folds 1-3 bed, theta 0.10, the 30 s octave gateway rule, with the same bed and crossing sample at
+each level (paired). The source level is raised by scaling the emitted signal (`gain_db` in `run.py`), so the rotor speed
+and the Doppler are unchanged. Levels are ASSUMED; only the change is meaningful.
+
+| Class | Measure | 0 dB | +6 dB | +12 dB |
+|---|---|---|---|---|
+| Mini | node Pd, crossings (n = 40) | 0.57 | 0.72 | 0.95 |
+| Mini | gateway Pd, crossings (n = 40) | 0.00 | 0.05 | 0.20 |
+| Mini | node Pd, layer test (n = 36) | 0.28 | 0.50 | 0.81 |
+| Mini | median best comb, layer test | 0.114 | 0.185 | 0.337 |
+| Matrice | node Pd, crossings (n = 40) | 0.35 | 0.75 | 0.93 |
+| Matrice | gateway Pd, crossings (n = 40) | 0.00 | 0.05 | 0.07 |
+| Matrice | node Pd, layer test (n = 36) | 0.22 | 0.47 | 0.94 |
+| Matrice | median best comb, layer test | 0.091 | 0.119 | 0.176 |
+
+A gateway pair needs both adjacent nodes to detect inside the 30 s window and their f0 estimates to agree. A separate
+pair-level run (new crossings, seed 6060, 40 per class; `pair_check.py`) classifies every both-detect pair (first
+in-window onset of node i with an in-window onset of node i+1):
+
+| Class and level | Gateway detected (of 40) | Both-detect pairs | Within 30 s | f0 rule passed | Both rules | f0 ratio 'other' | 'other' explained by Doppler |
+|---|---|---|---|---|---|---|---|
+| Mini 0 dB | 1 | 6 | 2 | 1 | 1 | 4 | 0 |
+| Mini +12 dB | 6 | 32 | 25 | 10 | 8 | 17 | 0 |
+| Matrice 0 dB | 0 | 4 | 0 | 0 | 0 | 4 | 0 |
+| Matrice +12 dB | 10 | 16 | 14 | 10 | 10 | 4 | 0 |
+
+Answer. +6 dB does raise node Pd, by 0.2 to 0.3 at the crossing level, but the gateway needs a pair. At +6 dB node Pd is
+0.5 to 0.75, so if the two nodes were independent both would detect in about a quarter to a half of crossings, and only
+about a third of both-detect pairs agree in f0. The gateway therefore moves from 0 to about 0.05. At +12 dB most mini
+pairs fail the f0 test on ratios outside the octave allowance (the rule allows 1, 1/2 and 2; 3/2, 2/3 and 3 fail).
+Doppler was the first candidate: nodes on either side of a 25 m/s pass see a ratio up to about 1.15, which exceeds the
+12 % tolerance. It explains none of the 'other' pairs (ASSUMED straight-line motion from `track_of`). So the 'other' pairs
+are harmonic or other locks, not Doppler. The two matrice gateway counts at +12 dB differ between the runs (3 of 40 in
+`level_check`, 10 of 40 in `pair_check`) because the crossing samples differ. That spread is about the binomial spread at
+n = 40 (SE about 0.06). The f0 match is the remaining lever. It was not changed here, because loosening it would also let
+in more false pairs and needs its own false-alarm test.
+
+### 10.4 Detector trials on folds 1-3 (step 4)
+
+`uv run sim/perimeter/trials.py --group <name> --hours 1.0 --crossings 120`. Each group shares one comb, so variants in a
+group share one crossing run and one false-alarm run. Crossings: 120 (seed 2026, the tuning sample), 96 below 100 m.
+False alarms: the rural bed on folds 1-3, 1 h per node, 13 node-hours (the same bed for every row). Node alarms are counted
+per node-day from 13 node-hours. A count of 21 is noisy (95% interval about 13 to 32), so differences of 10 to 20 % in
+that column are not meaningful. Gateway events are rare at this size and are shown for completeness only.
+
+| Change (one at a time) | Node Pd < 100 m | Gateway Pd < 100 m | Node alarms per node-day (count) | Gateway events | Kept |
+|---|---|---|---|---|---|
+| Baseline, theta 0.10 | 0.68 | 0.19 | 38.8 (21) | 0 | (frozen) |
+| theta 0.09 (below the old grid edge) | 0.70 | 0.18 | 55.4 | 2 | no |
+| theta 0.08 | 0.70 | 0.18 | 59.1 | 2 | no |
+| Track gap tolerance, 1 s (`gap_frames` = 31) | 0.69 | 0.19 | 42.5 | 1 | no |
+| Track gap tolerance, 2 s (`gap_frames` = 62) | 0.69 | 0.19 | 42.5 | 1 | no |
+| Floor gate 3 dB instead of 6 (`floor_gate_db`) | 0.77 | 0.34 | 236.3 | 11 | no |
+| Floor rise 0.05 dB per frame instead of 0.1 (`floor_up_db`) | 0.66 | 0.27 | 94.2 | 0 | no |
+| Start-up floor capped at the local median, +-16 bins (`init_env_bins`) | 0.67 | 0.16 | 51.7 | 1 | no |
+| Fundamental or second harmonic may pass the 3 dB gate (`gate_harm` = 2) | 0.77 | 0.25 | 81.2 | 0 | no |
+
+Keep rule: a change is kept only if gateway Pd rises without a clear rise in node alarms. None did. The gap, theta and
+start-up changes give no Pd gain. The floor and gate changes buy gateway Pd (0.25 to 0.34) with a 2 to 6 times rise in
+node alarms, which is the wrong direction for a false-alarm target. The start-up cap is bounded and unit-tested, but the
+scenario never starts a node with a drone already sounding (the warm-up is 10 s before the drone enters the window), so
+its row here does not test the fix.
+
+Tests added for the new options (`sim/tests/test_detector.py`): gap tolerance keeps the age across a short dropout and
+restarts it after a longer one (the baseline restarts after 25 frames); the start-up cap keeps a line present at start-up
+out of the floor; the second-harmonic gate passes a buried fundamental only when `gate_harm` = 2. Their per-frame cost
+(a few operations, and one start-up pass) was not costed against doc 04, because no change was kept.
+
+Tuned on folds 1-3 only: the trial rows above. Folds 4-5 were not used for any of them (the held-out and fresh runs used
+the frozen baseline).
+
+### 10.5 Fresh held-out run (step 5)
+
+Frozen before the run: theta 0.10 and the baseline detector (every new option off). No change met the keep rule, so the
+223 node-hour false-alarm run was not started, and the existing 78 node-hours were run with fresh seeds, as the brief
+allowed.
+
+Freshness. New and never used before: crossing seeds (5050), background master seed (8888), rural false-alarm seeds
+(8000) and dense stress seeds (9000). **Not fresh:** the ESC-50 clips. Folds 4-5 clips were used in round 1, and ESC-50 has
+only five folds, so the clip pool is the same. The event draws, their placement and the mixing are new. This is a second
+run on folds 4-5 clips with new draws, not a clean held-out set. Folds 4-5 are a repeated test set.
+
+| Set | Crossings below 100 m | Gateway Pd < 100 m | Node Pd < 100 m | Rural node-hours | Rural gateway events | Rural per km-day | 95% upper bound per km-day |
+|---|---|---|---|---|---|---|---|
+| Folds 4-5, round 1 (repeated test set) | 199 | 0.18 (36) | 0.62 | 78 | 1 | 0.95 | 4.5 |
+| Folds 4-5, fresh draws (this run) | 196 | 0.16 (31) | 0.51 | 78 | 2 | 1.9 | 6.0 |
+| Both runs pooled | 395 | 0.17 (67) | 0.56 | 156 | 3 | 1.4 | 3.7 |
+
+Clopper-Pearson 95% intervals: fresh gateway Pd 0.11 to 0.22; fresh node Pd 0.43 to 0.58. Rural node alarms: 34.5 per
+node-day in round 1 and 38.8 per node-day fresh. Fresh dense stress bed (0.5 h per node, 6.5 node-hours): 27 gateway
+events, 309 per km-day. The zero-event bound for <= 1 per km-day needs 223 node-hours (not run).
+
+Fresh gateway Pd below 100 m by class: FPV 30 of 60 (0.50); mini 1 of 65; matrice 0 of 71. (From the per-cell table
+printed by `run.py`; the per-cell table is not stored in the JSON.) Node Pd below 100 m: 0.65 below 50 m and 0.40 at
+50-100 m. Latency across a controller boundary (ASSUMED timing model): event mode median wait after the later onset 0.74 s
+without node-to-node and 0.35 s with it; idle mode 2.87 s and 2.45 s.
+
+### 10.6 Resources, reproduction, logs
+
+- Peak memory measured: 808 MB for the layer test (6 workers, `/usr/bin/time -v`) and 660 MB for the fresh held-out run
+  (parent process). The other jobs were not timed with `time -v`. The 3 GB address-space limit (`RLIMIT_AS`) is set only
+  in the false-alarm pool (`fa.py`, round 1). The crossing, layer and pair pools (`run.py`, `bed_layers.py`,
+  `level_check.py`, `pair_check.py`, `trials.py`) have no limit in the code, and no job ran more than 6 worker processes
+  at once. Those pools were not measured with a limit set, so their memory is not separately guaranteed.
+- Wall time: layer test 19 min (756 node-passes); level check 15 min; pair check 7 min (run twice); detector trials 10 to
+  15 min per group; ambient sensitivity 4 min per level; fresh held-out 49.5 min; ambient check under 1 min.
+- Reproduce: `uv run sim/perimeter/bed_layers.py --passes 4 --json <path>`;
+  `uv run sim/perimeter/bed_layers.py --passes 4 --ambient-db 30 --classes mini,matrice --rows "+ pink|+ pink + events"`
+  (and `--ambient-db 50`); `uv run sim/perimeter/ambient_check.py`; `uv run sim/perimeter/level_check.py --crossings 40`;
+  `uv run sim/perimeter/pair_check.py --crossings 40`;
+  `uv run sim/perimeter/trials.py --group track|floor-gate3|floor-up05|startup-cap16|gate2 --hours 1.0 --crossings 120`;
+  `uv run sim/perimeter/run.py --seeds fresh --crossings 240 --hours 6 --dense-hours 0.5`.
+- Logs are outside the repo, in the session scratch directory: `bed_layers_full.log`, `amb_30.log`, `amb_50.log`,
+  `level_check.log`, `pair_check.log` and `pair_check2.log` (the second is the Doppler version), `trial_*.log`, and
+  `fresh_heldout.log`, with JSON results beside them.
+- Tests: `uv run --with pytest --with numpy --with scipy pytest sim/tests`: 20 passed (17 before round 2, plus 3 for gap
+  tolerance, start-up cap and second-harmonic gate). `npm --prefix web test`: 76 passed, 1 skipped.
+
+### 10.7 What is ASSUMED, and what remains unproven
+
+- ASSUMED and not measured: the pink ambient level (40 dB SPL) and its spectrum; the source levels; the rural event rates;
+  the straight-line motion behind the Doppler check.
+- Found this round: the rural result depends on the ambient level within about 10 dB. The local data cannot set that level,
+  and its quiet sections are steeper than the sim's pink.
+- Not resolved: the f0 agreement of node pairs, which limits the gateway at higher source levels (harmonic locks, not
+  Doppler); whether the fundamental gate is the right place to fix mini and matrice; real multi-node data for the pair
+  rule; whether any detector change can reach the Pd target without the false-alarm cost seen here.
+- Still unproven: the 95% Pd target; the <= 1 per km-day false-alarm target (the best measured bound is 3.7 on pooled
+  156 node-hours; 223 node-hours with zero events would be needed); the rural bed as a model of a real site.
 
 ## Sources
 

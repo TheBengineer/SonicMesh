@@ -66,6 +66,12 @@ class Params:
     impulse_hold: int = 4  # frames after an impulsive one that are also treated as impulsive
     use_slew: bool = False  # tested: coarse track jumps by octaves within 1 s, so the gate kills real tracks
     slew_ratio: float = 1.3  # max f0 change within one second of the track
+    gap_frames: int = 0  # 0: a lost track resets its age (baseline). >0: a track re-found within this many frames
+    #                      near its last f0 keeps its age and harmonic count (a short dropout does not restart the gate)
+    gate_harm: int = 1  # the comb is kept only if one of the first gate_harm harmonics stands GATE_LOG above its flanks
+    #                     (1: the fundamental alone, the baseline). With pink ambient the fundamental is buried first.
+    init_env_bins: int = 0  # 0: start-up floor is the median over the start-up frames (baseline). >0: it is also capped
+    #                         at the median over +-init_env_bins bins, so a line present at start-up is not learned
 
 
 def _tables():
@@ -180,6 +186,7 @@ class Track:
         self.good = 0
         self.ref = -1
         self.ref_t = 0
+        self.dormant = None  # (index, age, good, frame of last hit) of the last track that lost its hits (gap_frames)
 
     def _hit_ok(self, S, W, c, p):
         if p.use_slew and self.ref >= 0 and abs(math.log(F0[c] / F0[self.ref])) > math.log(p.slew_ratio):
@@ -194,8 +201,13 @@ class Track:
             if S[c] >= p.theta:
                 ok, h = self._hit_ok(S, W, c, p)
                 if ok:
+                    age, good = 1, int(h >= p.harm_min)
+                    d = self.dormant
+                    if p.gap_frames > 0 and d is not None and self.t - d[3] <= p.gap_frames and abs(c - d[0]) <= TRACK_STEP:
+                        age, good = d[1] + 1, d[2] + int(h >= p.harm_min)  # the same source, after a short dropout
+                    self.dormant = None
                     self.index, self.q, self.last_hit = c, 1, self.t
-                    self.age, self.good = 1, int(h >= p.harm_min)
+                    self.age, self.good = age, good
                     self.ref, self.ref_t = c, self.t
         else:
             lo = max(0, self.index - TRACK_STEP)
@@ -211,6 +223,8 @@ class Track:
             else:
                 self.q -= 1
                 if self.q == 0:
+                    if p.gap_frames > 0 and self.age > 0:
+                        self.dormant = (self.index, self.age, self.good, self.last_hit)
                     self.index, self.age, self.good = -1, 0, 0
             if self.q > 0 and self.t - self.ref_t >= 31:
                 self.ref, self.ref_t = self.index, self.t
@@ -273,6 +287,11 @@ class Detector:
                 continue
             if self.floor is None:
                 self.floor = np.median(np.array(self.init_L), axis=0)
+                if p.init_env_bins > 0:  # a narrow line at start-up is above its local median: cap the floor there
+                    w = p.init_env_bins
+                    padded_floor = np.pad(self.floor, w, mode="edge")
+                    env = np.median(np.lib.stride_tricks.sliding_window_view(padded_floor, 2 * w + 1), axis=1)
+                    self.floor = np.minimum(self.floor, env)
             # impulsive frame: broadband level jumps by jump_db from the previous frame, and the frames after it
             # for impulse_hold; no floor update and no hit. A sustained rise passes after the hold.
             jump = p.use_impulse and (bb[i] - self.bb_prev > p.jump_db or self.impulse_left > 0)
@@ -299,7 +318,8 @@ class Detector:
         fl = (cs[:, TAB["lo"]] - cs[:, TAB["a"]] + cs[:, TAB["b"]] - cs[:, TAB["hi1"]]) * TAB["inv_flank"]
         ratio = np.where(TAB["has_flank"], win / np.maximum(fl, 1e-30), 1.0)
         E = np.log10(np.maximum(ratio, 1.0)) * VALID
-        S[ok] = E.sum(axis=2) / NH * (E[:, :, 0] >= GATE_LOG)
+        gate = E[:, :, : p.gate_harm].max(axis=2) >= GATE_LOG
+        S[ok] = E.sum(axis=2) / NH * gate
         S[imp] = 0.0
         self.s_max = float(S[ok][-1].max())
         return S, W, ok
