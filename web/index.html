@@ -2,7 +2,8 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#0f1419" />
     <meta name="description" content="SonicMesh web demo: a browser simulation of an acoustic drone-detection perimeter." />
     <link rel="icon" href="data:," />
     <title>SonicMesh demo</title>
@@ -18,13 +19,17 @@
       <main id="viewport">
         <div id="scene"></div>
         <div id="toolbar" class="panel float">
+          <div class="group how-group">
+            <button id="open-how" class="how-button attention">How it works</button>
+          </div>
           <div class="group">
             <span class="label">View</span>
             <button data-view="orbit" aria-pressed="true">Orbit</button>
             <button data-view="follow">Follow drone</button>
             <button data-view="top">Top-down</button>
+            <button id="toolbar-more" aria-expanded="false" aria-label="More controls" title="More controls">⋯</button>
           </div>
-          <div class="group">
+          <div class="group toolbar-extra">
             <span class="label">Edit</span>
             <button data-mode="select" aria-pressed="true">Select</button>
             <div class="add-form">
@@ -45,7 +50,7 @@
               </select>
             </div>
           </div>
-          <div class="group">
+          <div class="group toolbar-extra">
             <button id="open-whats-real">What's real?</button>
             <button id="open-about">About</button>
             <a class="button-link" href="https://github.com/TheBengineer/SonicMesh" target="_blank" rel="noopener">GitHub repo</a>
@@ -61,8 +66,14 @@
       <button id="pane-toggle" aria-expanded="true" aria-label="Collapse the object list" title="Collapse the object list">▸</button>
       <section id="waterfalls" class="panel"></section>
       <footer id="timeline" class="panel"></footer>
+      <nav id="mobile-tabs" class="panel" aria-label="Panels">
+        <button data-sheet-tab="objects" aria-pressed="false">Objects</button>
+        <button data-sheet-tab="waterfalls" aria-pressed="false">Waterfalls</button>
+        <button data-sheet-tab="lora" aria-pressed="false">LoRa &amp; run</button>
+      </nav>
     </div>
     <dialog id="intro-dialog" class="overlay intro"></dialog>
+    <dialog id="how-dialog" class="overlay how" aria-label="How SonicMesh works"></dialog>
     <dialog id="about-dialog" class="overlay"></dialog>
     <dialog id="ledger-dialog" class="overlay wide"></dialog>
     <script type="module" src="/src/main.ts"></script>

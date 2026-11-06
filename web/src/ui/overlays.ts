@@ -12,7 +12,7 @@ function closeOnClick(dialog: HTMLDialogElement): void {
 }
 
 // The first thing a visitor sees. Esc closes it and leaves the run paused.
-export function renderIntro(dialog: HTMLDialogElement, onStart: () => void): void {
+export function renderIntro(dialog: HTMLDialogElement, onStart: () => void, onHow: () => void): void {
   dialog.innerHTML = `
     <h2>Can you hear it coming?</h2>
     <p>A small drone flying low is hard to spot, but it can't fly quietly.</p>
@@ -25,11 +25,18 @@ export function renderIntro(dialog: HTMLDialogElement, onStart: () => void): voi
       <a href="${REPO}" target="_blank" rel="noopener">Repository on GitHub</a>
       <a href="${LINKEDIN}" target="_blank" rel="noopener">LinkedIn</a>
     </div>
-    <button class="start" autofocus>Close and start</button>
+    <div class="intro-actions">
+      <button class="how-link">How it works</button>
+      <button class="start" autofocus>Close and start</button>
+    </div>
   `;
   dialog.querySelector('.start')?.addEventListener('click', () => {
     dialog.close();
     onStart();
+  });
+  dialog.querySelector('.how-link')?.addEventListener('click', () => {
+    dialog.close();
+    onHow();
   });
 }
 

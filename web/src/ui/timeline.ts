@@ -145,7 +145,7 @@ export class Timeline {
     const lora = info.lora;
     const nodes = lora?.nodes ?? [];
     const rows = 1 + nodes.length;
-    const cssW = Math.max(320, canvas.clientWidth || 800);
+    const cssW = Math.max(240, canvas.clientWidth || 800);
     const cssH = TOP + rows * LANE_H + 1;
     const dpr = Math.min(window.devicePixelRatio, 2);
     if (canvas.width !== Math.round(cssW * dpr) || canvas.height !== Math.round(cssH * dpr)) {

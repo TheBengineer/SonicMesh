@@ -23,6 +23,8 @@ import {
   type MessageFilter,
 } from './ui/inspector';
 import { renderAbout, renderIntro, renderLedger } from './ui/overlays';
+import { HowItWorks } from './ui/howItWorks';
+import { COARSE_QUERY, NARROW_QUERY, TOUCH_CLICK_PX, TOUCH_PICK_PX, TouchSticks } from './ui/mobile';
 import { Popup } from './ui/popup';
 import { LevelHistory, spanAt } from './ui/detectMarks';
 import { WaterfallStrip, type StripNode } from './ui/waterfalls';
@@ -224,6 +226,10 @@ export function startApp(root: HTMLElement): void {
   let analysis: MicAnalysis | null = null;
   // The all-nodes waterfall strip. Closed, it asks the worker for no extra mics and does no analysis.
   let wfOpen = false;
+  // Phones show one panel at a time under the map, chosen from the bottom tabs.
+  const narrow = window.matchMedia(NARROW_QUERY);
+  const coarse = window.matchMedia(COARSE_QUERY);
+  let sheet: string | null = null;
 
   function flash(text: string): void {
     message = text;
@@ -234,7 +240,11 @@ export function startApp(root: HTMLElement): void {
   // Selecting opens the object's window; clearing the selection closes it.
   function select(s: Selection): void {
     const sameNode = s?.kind === 'node' && selection?.kind === 'node' && s.id === selection.id;
+    const changed = JSON.stringify(s) !== JSON.stringify(selection);
     selection = s;
+    if (s && narrow.matches) setSheet(null);
+    // On a phone a drone opens folded, to fly it with the map clear. Its window is one tap away.
+    if (changed) popup.setFolded(narrow.matches && s?.kind === 'drone');
     // Clicking a node plays its mic. Pressing and releasing both select, so only a change of node restarts it.
     if (sameNode) listener.wake();
     else if (s?.kind === 'node') startListening(waterfallMic() ?? `${s.id}.0`);
@@ -320,7 +330,8 @@ export function startApp(root: HTMLElement): void {
   // stick, so a replay flies the same path whatever the camera does. Only changes are logged, so an idle controller
   // does not touch the run.
   function pollSticks(): void {
-    const polled = quantizeStick(cameraStick(combineSticks(keyboardStick(keysDown), gamepadStick()), view.cameraHeading()));
+    const sticks = combineSticks(combineSticks(keyboardStick(keysDown), gamepadStick()), touchSticks.stick);
+    const polled = quantizeStick(cameraStick(sticks, view.cameraHeading()));
     const id = selection?.kind === 'drone' ? selection.id : null;
     if (sameStick(polled, lastPolled) && id === lastTarget) return;
     lastPolled = polled;
@@ -456,6 +467,7 @@ export function startApp(root: HTMLElement): void {
     },
   });
   const popupInspector = new Inspector(popup.body, onAction);
+  const touchSticks = new TouchSticks(need<HTMLElement>(root, '#viewport'));
   const waterfallsEl = need<HTMLElement>(root, '#waterfalls');
   const strip = new WaterfallStrip(waterfallsEl, badgeHtml(ledger.byId.get(COMPONENT.waterfall)), (id) => {
     select({ kind: 'node', id });
@@ -504,11 +516,21 @@ export function startApp(root: HTMLElement): void {
   sceneEl.addEventListener(
     'pointerdown',
     (e) => {
+      // A second finger is a pinch for the camera, so it cancels any tap or drag the first one began.
+      if (!e.isPrimary) {
+        press = null;
+        drag = null;
+        return;
+      }
       if (e.button !== 0) return;
-      const hit = view.pick(e.clientX, e.clientY);
+      const touch = e.pointerType === 'touch';
+      const hit = view.pick(e.clientX, e.clientY, touch ? TOUCH_PICK_PX : 0);
       press = { x: e.clientX, y: e.clientY, hit };
       const t = hit?.target;
-      if (mode === 'select' && t && (t.kind === 'node' || t.kind === 'gateway')) {
+      // By touch, only an object that is already selected drags. Otherwise a swipe to orbit that starts near a node
+      // would move the node.
+      const held = !touch || (t && JSON.stringify(selectionFor(t)) === JSON.stringify(selection));
+      if (mode === 'select' && held && t && (t.kind === 'node' || t.kind === 'gateway')) {
         e.stopPropagation();
         drag = { target: t, lastX: NaN, lastY: NaN };
         select(selectionFor(t));
@@ -535,7 +557,7 @@ export function startApp(root: HTMLElement): void {
     press = null;
     drag = null;
     if (!p || e.button !== 0) return;
-    if (Math.hypot(e.clientX - p.x, e.clientY - p.y) > CLICK_PX) return;
+    if (Math.hypot(e.clientX - p.x, e.clientY - p.y) > (e.pointerType === 'touch' ? TOUCH_CLICK_PX : CLICK_PX)) return;
     const hit = p.hit;
     if (mode === 'select') {
       select(hit ? selectionFor(hit.target) : null);
@@ -559,6 +581,11 @@ export function startApp(root: HTMLElement): void {
       select({ kind: 'drone', id });
     }
     setMode('select');
+  });
+
+  window.addEventListener('pointercancel', () => {
+    press = null;
+    drag = null;
   });
 
   window.addEventListener('keydown', (e) => {
@@ -611,8 +638,58 @@ export function startApp(root: HTMLElement): void {
     }),
   );
   root.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach((b) =>
-    b.addEventListener('click', () => setMode(b.dataset.mode as Mode)),
+    b.addEventListener('click', () => {
+      setMode(b.dataset.mode as Mode);
+      if (!narrow.matches || b.dataset.mode === 'select') return;
+      setToolbarOpen(false);
+      flash('Tap the ground to place it.');
+    }),
   );
+  const toolbarEl = need<HTMLElement>(root, '#toolbar');
+  const toolbarMore = need<HTMLButtonElement>(root, '#toolbar-more');
+  function setToolbarOpen(on: boolean): void {
+    toolbarEl.classList.toggle('open', on);
+    toolbarMore.setAttribute('aria-expanded', String(on));
+  }
+  toolbarMore.addEventListener('click', () => setToolbarOpen(!toolbarEl.classList.contains('open')));
+  root.querySelectorAll<HTMLButtonElement>('[data-sheet-tab]').forEach((b) =>
+    b.addEventListener('click', () => {
+      const tab = b.dataset.sheetTab ?? null;
+      setSheet(tab === sheet ? null : tab);
+    }),
+  );
+  // The walkthrough pauses the run behind it, and picks it back up on closing. From the splash, closing starts the run.
+  let playAfterHow = false;
+  const how = new HowItWorks(need<HTMLDialogElement>(document, '#how-dialog'), {
+    onClose: () => {
+      if (playAfterHow && !frameNow().playing) togglePlay();
+    },
+    onTry: (what) => {
+      playAfterHow = true;
+      if (what === 'real') {
+        need<HTMLButtonElement>(root, '#open-whats-real').click();
+        return;
+      }
+      const state = frameNow().state;
+      if (what === 'fly' && state.drones[0]) {
+        viewPicked = true;
+        select({ kind: 'drone', id: state.drones[0].id });
+        setViewMode('follow');
+        flash(coarse.matches ? 'Use the thumb sticks to fly it.' : 'Fly it with WASD or the arrow keys. Q and E go down and up.');
+      } else if (what === 'listen' && state.nodes[0]) {
+        select({ kind: 'node', id: state.nodes[0].id });
+      }
+      refresh();
+    },
+  });
+  function openHow(fromSplash: boolean): void {
+    playAfterHow = fromSplash || frameNow().playing;
+    if (frameNow().playing) host.play(false);
+    howButton.classList.remove('attention');
+    how.open();
+  }
+  const howButton = need<HTMLButtonElement>(root, '#open-how');
+  howButton.addEventListener('click', () => openHow(false));
   need<HTMLButtonElement>(root, '#open-about').addEventListener('click', () => aboutDialog.showModal());
   need<HTMLButtonElement>(root, '#open-whats-real').addEventListener('click', () => {
     renderLedger(ledgerDialog, ledger, presentIds(worldNow(), scenario));
@@ -672,6 +749,16 @@ export function startApp(root: HTMLElement): void {
     refresh();
   }
 
+  // Opens one phone panel, or none. The waterfalls follow theirs, so a phone runs no strip analysis it is not showing.
+  function setSheet(s: string | null): void {
+    if (s === sheet) return;
+    sheet = s;
+    if (s) root.dataset.sheet = s;
+    else delete root.dataset.sheet;
+    markPressed(root, '[data-sheet-tab]', 'sheetTab', s ?? '');
+    setWaterfalls(s === 'waterfalls');
+  }
+
   function drawStrip(f: Frame): void {
     const nodes: StripNode[] = f.state.nodes.map((n) => ({
       id: n.id,
@@ -700,6 +787,8 @@ export function startApp(root: HTMLElement): void {
     root.classList.toggle('audio-muted', !f.playing || f.speed !== 1);
     timeline.update(timelineInfo(f, terrain.seed, selection?.kind === 'packet' ? selection.id : null), message);
     syncInspect();
+    const flyable = selection?.kind === 'drone';
+    touchSticks.setVisible(flyable && (narrow.matches ? sheet === null && popup.folded : coarse.matches));
   }
 
   // Each node's level, kept here so the strip has its history as soon as a node is opened.
@@ -752,13 +841,27 @@ export function startApp(root: HTMLElement): void {
     paneToggle.title = label;
     paneToggle.setAttribute('aria-label', label);
   });
+  narrow.addEventListener('change', () => {
+    if (narrow.matches) {
+      setSheet(null);
+      setWaterfalls(false);
+      return;
+    }
+    setSheet(null);
+    setToolbarOpen(false);
+    popup.setFolded(false);
+    setWaterfalls(true);
+  });
   setViewMode('orbit');
-  setWaterfalls(true);
+  setWaterfalls(!narrow.matches);
   requestAnimationFrame(frame);
 
   const intro = need<HTMLDialogElement>(document.body, '#intro-dialog');
   renderIntro(intro, () => {
     if (!frameNow().playing) togglePlay();
-  });
-  intro.showModal();
+    if (narrow.matches) flash('Tap a node to hear it, or a drone to fly it.');
+  }, () => openHow(true));
+  // A link ending in #how-it-works goes straight to the walkthrough.
+  if (window.location.hash === '#how-it-works') openHow(true);
+  else intro.showModal();
 }

@@ -148,7 +148,7 @@ export class Popup {
     this.root.setAttribute('role', 'dialog');
     this.root.hidden = true;
     this.root.innerHTML = `
-      <div class="popup-title"><span></span><button type="button" class="popup-close" aria-label="Close (Esc)">×</button></div>
+      <div class="popup-title"><span></span><button type="button" class="popup-fold" aria-expanded="true" aria-label="Fold the window">▾</button><button type="button" class="popup-close" aria-label="Close (Esc)">×</button></div>
       <div class="popup-body"></div>
       <div class="popup-grip" aria-hidden="true"></div>`;
     this.titleText = this.root.querySelector<HTMLElement>('.popup-title span') as HTMLElement;
@@ -158,6 +158,7 @@ export class Popup {
     container.append(this.svg, this.root);
 
     this.root.querySelector('.popup-close')?.addEventListener('click', () => opts.onClose());
+    this.root.querySelector('.popup-fold')?.addEventListener('click', () => this.setFolded(!this.folded));
     titleBar.addEventListener('pointerdown', (e) => {
       if (e.button !== 0 || (e.target as HTMLElement).closest('button')) return;
       const p = this.local(e);
@@ -204,6 +205,20 @@ export class Popup {
 
   get isOpen(): boolean {
     return this.open;
+  }
+
+  get folded(): boolean {
+    return this.root.classList.contains('folded');
+  }
+
+  // Phones only: the window shrinks to its title bar, which leaves the map and the flying sticks clear.
+  setFolded(on: boolean): void {
+    this.root.classList.toggle('folded', on);
+    const fold = this.root.querySelector<HTMLElement>('.popup-fold');
+    if (!fold) return;
+    fold.textContent = on ? '▴' : '▾';
+    fold.setAttribute('aria-expanded', String(!on));
+    fold.setAttribute('aria-label', on ? 'Unfold the window' : 'Fold the window');
   }
 
   // Shows the window. Placed beside the object only on opening, so a window the user moved stays where it is.

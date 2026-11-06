@@ -925,11 +925,14 @@ export class WorldView {
     ctx.textAlign = 'center';
     const text = (label: string, x: number, y: number, color: string, px: number): void => {
       ctx.font = `bold ${px}px sans-serif`;
+      // Kept on the map, since a narrow screen has a node at each edge.
+      const half = ctx.measureText(label).width / 2 + 4;
+      const cx = half * 2 < w ? Math.min(Math.max(x, half), w - half) : x;
       ctx.lineWidth = 4;
       ctx.strokeStyle = 'rgba(0, 0, 0, 0.85)';
-      ctx.strokeText(label, x, y);
+      ctx.strokeText(label, cx, y);
       ctx.fillStyle = color;
-      ctx.fillText(label, x, y);
+      ctx.fillText(label, cx, y);
     };
     const placed: [number, number][] = [];
     for (const n of state.nodes) {
@@ -989,7 +992,14 @@ export class WorldView {
     const mode = lora ? `LoRa ${lora.mode} mode, superframe ${lora.superframe}` : 'LoRa starting';
     ctx.fillText(mode, m, h - 10);
     ctx.fillStyle = '#8a98a8';
-    ctx.fillText('lines: green decoded, amber collision, red range, purple half-duplex, dashed grey in Truth: the nearest drone whose pitch fits', m, h - 26);
+    const legend = 'lines: green decoded, amber collision, red range, purple half-duplex';
+    const truthLegend = 'dashed grey in Truth: the nearest drone whose pitch fits';
+    if (ctx.measureText(`${legend}, ${truthLegend}`).width <= w - 2 * m) {
+      ctx.fillText(`${legend}, ${truthLegend}`, m, h - 26);
+    } else {
+      ctx.fillText(truthLegend, m, h - 26);
+      ctx.fillText(legend, m, h - 42);
+    }
   }
 
   // Where an object sits in sim coordinates, or null if it is gone.
@@ -1054,8 +1064,35 @@ export class WorldView {
     return { x, y, visible: !behind && x >= 0 && x <= w && y >= 0 && y <= h };
   }
 
-  // Returns what is under the pointer, or the ground point if nothing else is.
-  pick(clientX: number, clientY: number): Hit | null {
+  // Returns what is under the pointer, or the ground point if nothing else is. With slopPx, a marker that close to the
+  // pointer wins over the ground, since a finger cannot land exactly on one.
+  pick(clientX: number, clientY: number, slopPx = 0): Hit | null {
+    const hit = this.pickExact(clientX, clientY);
+    if (slopPx <= 0 || (hit && hit.target.kind !== 'terrain')) return hit;
+    return this.markerNear(clientX, clientY, slopPx) ?? hit;
+  }
+
+  private markerNear(clientX: number, clientY: number, slopPx: number): Hit | null {
+    const snap = this.snap;
+    if (!snap) return null;
+    const rect = this.container.getBoundingClientRect();
+    let best: Hit | null = null;
+    let bestD = slopPx;
+    const consider = (selection: Selection, target: Target, x: number, y: number): void => {
+      const p = this.screenPos(selection);
+      if (!p?.visible) return;
+      const d = Math.hypot(p.x - (clientX - rect.left), p.y - (clientY - rect.top));
+      if (d > bestD) return;
+      bestD = d;
+      best = { target, x, y };
+    };
+    for (const n of snap.state.nodes) consider({ kind: 'node', id: n.id }, { kind: 'node', id: n.id }, n.x, n.y);
+    consider({ kind: 'gateway' }, { kind: 'gateway' }, snap.state.gateway.x, snap.state.gateway.y);
+    for (const d of snap.state.drones) consider({ kind: 'drone', id: d.id }, { kind: 'drone', id: d.id }, d.x, d.y);
+    return best;
+  }
+
+  private pickExact(clientX: number, clientY: number): Hit | null {
     const renderer = this.renderer;
     if (!renderer) return this.pick2d(clientX, clientY);
     this.setPointer(renderer.domElement, clientX, clientY);
