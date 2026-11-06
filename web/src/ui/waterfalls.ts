@@ -66,7 +66,7 @@ export class WaterfallStrip {
         <div class="scale"><span>10 dB</span><span class="ramp"></span><span>90 dB</span></div>
       </div>
       <div class="wf-grid"></div>
-      <p class="note">One tile per node, first mic. The last 6 s, same FFT, dB scale and colours as the Waterfall tab. The bar on the left edge is what the detector measures, how strongly the sound forms evenly spaced harmonics between 80 and 4000 Hz (dashed lines), and its mark is the threshold, so a loud sound with no harmonics stays low. It is grey with nothing to follow, amber while it follows a pitch and is not yet sure, and red once detecting. Blue lines mark the start and end of a detection, and the green line follows the pitch it is on. A node follows one pitch at a time, and none of this knows which drone it is hearing. Click a tile to open that node.</p>`;
+      <p class="note">One tile per node, first mic. The last 6 s, same FFT, dB scale and colours as the Waterfall tab. The bar on the left edge is what the detector measures, how strongly the sound forms evenly spaced harmonics between 80 and 4000 Hz (dashed lines), and its mark is the threshold, so a loud sound with no harmonics stays low. It is grey with nothing to follow, amber while it follows a pitch and is not yet sure, and red once detecting. Blue lines mark the start and end of a detection, and the green line follows the pitch it is on, with gaps while it has jumped away from its recent pitch. A node follows one pitch at a time, and none of this knows which drone it is hearing. Click a tile to open that node.</p>`;
     this.grid = need<HTMLElement>(root, '.wf-grid');
     new ResizeObserver(() => this.layout()).observe(this.grid);
   }

@@ -471,7 +471,7 @@ function waterfallNode(ctx: InspectContext, n: NodeSpec): Panel {
       </div>
       <div class="scale"><span>10 dB</span><span class="ramp"></span><span>90 dB</span></div>
       <p class="note">dB SPL per bin, as the line level of a sine in that bin. 1024-point Hann FFT, 50 % overlap, 0 to 8 kHz, newest on the right.</p>
-      <p class="note">Debug lines. Dashed: the 80 to 4000 Hz band the detector searches for evenly spaced harmonics. The strip under the plot is how strongly it finds them, brighter when stronger: grey with nothing to follow, amber while it follows a pitch and is not yet sure, red once detecting. Blue: the start and end of a detection. Green: the pitch the detector is on, while it detects. A node follows one pitch at a time and does not know which drone it is hearing.</p>
+      <p class="note">Debug lines. Dashed: the 80 to 4000 Hz band the detector searches for evenly spaced harmonics. The strip under the plot is how strongly it finds them, brighter when stronger: grey with nothing to follow, amber while it follows a pitch and is not yet sure, red once detecting. Blue: the start and end of a detection. Green: the pitch the detector is on, while it detects, with gaps while it has jumped to a sub-harmonic or a harmonic. A node follows one pitch at a time and does not know which drone it is hearing.</p>
       <div class="actions"><button data-action="overlay" data-id="${n.id}" aria-pressed="${overlayOn}"${truthOn ? '' : ' disabled'}>Truth: blade-pass harmonics</button></div>
       <p class="note">${
         truthOn

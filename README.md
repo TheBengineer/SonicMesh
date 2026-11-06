@@ -3,6 +3,8 @@
 A loose perimeter of low-cost microcontroller acoustic nodes that detects small drones crossing at low altitude.
 It works as a tripwire: for each crossing it says where along the line, which way and when.
 
+**[Try the live demo](https://sonicmesh.thebengineer.net)**, a browser simulation of the perimeter.
+
 **Nodes:**
 - **Detector (~$20–35, ~2 mA):** nRF52840/nRF54L15, one PDM mic, LoRa radio with ranging (LR2021), accelerometer. No GNSS.
 - **Array (~$65–90):** ESP32-S3, 4 mics for bearings, LR2021, GNSS with PPS.

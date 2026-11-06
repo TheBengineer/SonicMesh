@@ -75,8 +75,24 @@ describe('node pitch', () => {
     const stub = new NodeStub(1, 'detector', 1);
     for (let i = 0; i < 20; i++) feed(stub, 1 + i * 0.01, ON);
     feed(stub, 1.2, { ...ON, f0Hz: 1100 });
-    expect(stub.trackHz).toBe(1100);
     expect(stub.pitchHz).toBe(250);
+  });
+
+  it('leaves a gap in the line while the detector has jumped to a sub-harmonic or a harmonic', () => {
+    const stub = new NodeStub(1, 'detector', 1);
+    for (let i = 0; i < 100; i++) feed(stub, 1 + i * 0.01, { ...ON, f0Hz: 600 });
+    feed(stub, 2, { ...ON, f0Hz: 105 });
+    expect(stub.trackHz).toBe(0);
+    feed(stub, 2.01, { ...ON, f0Hz: 1200 });
+    expect(stub.trackHz).toBe(0);
+    feed(stub, 2.02, { ...ON, f0Hz: 620 });
+    expect(stub.trackHz).toBe(620);
+  });
+
+  it('keeps a true low pitch on the line', () => {
+    const stub = new NodeStub(1, 'detector', 1);
+    for (let i = 0; i < 100; i++) feed(stub, 1 + i * 0.01, { ...ON, f0Hz: 100 });
+    expect(stub.trackHz).toBe(100);
   });
 });
 

@@ -13,8 +13,11 @@ import type { DetectSpan, DetectState } from './types';
 export const TARGET_HOLD_S = 1;
 // How often an array node takes a new bearing.
 export const BEARING_PERIOD_S = 0.5;
-// Readings behind a node's steady pitch, one per tick: about a second, so single-frame jumps do not move it.
-const PITCH_WINDOW = 100;
+// Readings behind a node's steady pitch, one per tick: about 3 s, so the detector's jumps to a sub-harmonic or a harmonic
+// do not move it.
+const PITCH_WINDOW = 300;
+// How far a reading can sit from the steady pitch and still show on the waterfall, with room for Doppler.
+const LINE_TOL = 0.13;
 // Spans kept for the debug lines; the waterfalls show well under a minute.
 export const MAX_DETECT_SPANS = 8;
 export const RANGE_SIGMA_M = 4;
@@ -245,12 +248,14 @@ export class NodeStub {
     return this.tracking ? 'arming' : 'quiet';
   }
 
-  // The pitch on the waterfall: the detector's own, while it detects.
+  // The pitch on the waterfall: the detector's own while it detects, and 0 for a gap while it has jumped away from its
+  // steady pitch.
   get trackHz(): number {
-    return this.detecting ? this.lastF0 : 0;
+    const steady = this.pitchHz;
+    return steady > 0 && Math.abs(this.lastF0 / steady - 1) <= LINE_TOL ? this.lastF0 : 0;
   }
 
-  // The median pitch over the last second of a detection, which the map labels and bogies use. 0 before the first.
+  // The median pitch over the last 3 s of a detection, which the map labels and bogies use. 0 before the first.
   get pitchHz(): number {
     if (!this.detecting || this.pitches.length === 0) return 0;
     const sorted = [...this.pitches].sort((a, b) => a - b);
