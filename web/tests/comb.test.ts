@@ -55,6 +55,8 @@ function params(p: Record<string, number>): Partial<CombParams> {
     ...(p.floor_up_db !== undefined && { floorUpDb: p.floor_up_db }),
     ...(p.gate_harm !== undefined && { gateHarm: p.gate_harm }),
     ...(p.gap_frames !== undefined && { gapFrames: p.gap_frames }),
+    ...(p.gap_harm !== undefined && { gapHarm: p.gap_harm }),
+    ...(p.sub_guard !== undefined && { subGuard: Boolean(p.sub_guard) }),
     ...(p.init_env_bins !== undefined && { initEnvBins: p.init_env_bins }),
     ...(p.hold_ratio !== undefined && { holdRatio: p.hold_ratio }),
   };

@@ -105,15 +105,15 @@ export function groundColor(t: Terrain, x: number, y: number): [number, number, 
   return [(0.2 + 0.3 * f) * shade, (0.34 + 0.24 * f) * shade, (0.17 + 0.14 * f) * shade];
 }
 
-// Visual only, at real size for scale: a camp behind the line near the demo's gateway, on the side away from the incoming
+// Visual only, at real size for scale: a camp well behind the demo's line, on the side away from the incoming
 // drones. Two blocks of tents, two rows of five each, with the SUVs parked side by side between them as a motor pool.
 // Lengths run north to south.
 export const TENT = { width_m: 5, length_m: 10, height_m: 3 };
 export const SUV = { width_m: 1.9, length_m: 4.8, height_m: 1.8 };
 const CAMP_X = 70;
 const across = (count: number, step: number, y: number): Vec2[] => Array.from({ length: count }, (_, i) => ({ x: CAMP_X + (i - (count - 1) / 2) * step, y }));
-export const TENTS: Vec2[] = [-125, -140, -172, -187].flatMap((y) => across(5, 9, y));
-export const SUVS: Vec2[] = across(5, 4.5, -156);
+export const TENTS: Vec2[] = [-275, -290, -322, -337].flatMap((y) => across(5, 9, y));
+export const SUVS: Vec2[] = across(5, 4.5, -306);
 const CAMP_CLEAR_M = 8;
 
 function inCamp(x: number, y: number): boolean {

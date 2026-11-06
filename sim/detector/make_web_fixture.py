@@ -72,6 +72,9 @@ CASES = [
     ("drone_250", {"n_fft": 4096, "hop": 2048}),
     ("drone_100_weak", {"n_fft": 8192, "hop": 4096, "floor_up_db": 0.05, "gate_harm": 2}),
     ("drone_600_fading", {"gap_frames": 16, "init_env_bins": 8, "hold_ratio": 0.5}),
+    ("drone_100_weak", {"gap_frames": 31, "gap_harm": 4, "sub_guard": True}),
+    ("drone_600_fading", {"sub_guard": True}),
+    ("clicks", {"sub_guard": True}),
 ]
 
 

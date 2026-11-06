@@ -94,6 +94,53 @@ def test_gap_tolerance_keeps_age_across_a_short_dropout():
     assert run(31, 60) <= 2
 
 
+def test_gap_harm_keeps_age_when_a_track_returns_on_a_related_harmonic():
+    from detector.detector import F0, GRID, Track
+
+    near = lambda f: int(np.argmin(np.abs(F0 - f)))
+
+    def run(limit, back_at):
+        p = Params(theta=0.1, gap_frames=31, gap_harm=limit, sub_guard=True, use_harm=False)
+        tr = Track()
+        S = np.zeros(GRID, np.float32)
+        W = np.zeros(257)
+        S[near(250.0)] = 0.3
+        for _ in range(20):
+            tr.update(S, W, p)
+        S[:] = 0.0
+        for _ in range(16):  # the persistence buffer runs out, so the track is lost
+            tr.update(S, W, p)
+        S[near(back_at)] = 0.3
+        tr.update(S, W, p)
+        return tr.age
+
+    assert run(0, 750.0) == 1  # gap tolerance alone wants the same pitch
+    assert run(4, 750.0) > 20  # third harmonic of the same source
+    assert run(4, 375.0) > 20  # 3/2, the two neighbouring harmonics of a source
+    assert run(4, 625.0) == 1  # 5/2 is past a limit of 4
+    assert run(6, 625.0) > 20
+
+
+def test_sub_guard_keeps_the_pitch_through_an_all_zero_frame():
+    from detector.detector import F0, GRID, Track
+
+    def after_zero_frame(guard):
+        p = Params(theta=0.1, sub_guard=guard, use_harm=False)
+        tr = Track()
+        S = np.zeros(GRID, np.float32)
+        W = np.zeros(257)
+        at = int(np.argmin(np.abs(F0 - 250.0)))
+        S[at] = 0.3
+        for _ in range(5):
+            tr.update(S, W, p)
+        S[:] = 0.0
+        tr.update(S, W, p)
+        return F0[tr.index]
+
+    assert after_zero_frame(True) == pytest.approx(250.0, rel=0.01)
+    assert after_zero_frame(False) < 100.0  # what the option exists to stop
+
+
 def test_startup_cap_keeps_a_line_present_at_start_up_out_of_the_floor():
     from detector.detector import Detector, LO_BIN, NB
 

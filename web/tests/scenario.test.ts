@@ -13,7 +13,7 @@ describe('scenario schema', () => {
     expect(ok).toBe(true);
   });
 
-  it('the example has the demo layout: 13 nodes at 120 m, every third an array, three drones crossing', () => {
+  it('the example has the demo layout: 13 nodes at 120 m, every third an array, one drone crossing', () => {
     const s = parseScenario(exampleScenario);
     expect(s.nodes).toHaveLength(13);
     const xs = s.nodes.map((n) => n.x);
@@ -23,8 +23,8 @@ describe('scenario schema', () => {
     for (const n of s.nodes) expect(Math.abs(n.y)).toBe(30);
     expect(new Set(s.nodes.filter((n) => n.kind === 'array').map((n) => n.y)).size).toBe(2);
     expect(s.gateway.y).toBeLessThan(0);
-    expect(s.drones.map((d) => d.class)).toEqual(['fpv', 'mini', 'matrice']);
-    expect(s.drones[0].path).toMatchObject({ kind: 'crossing', speed_mps: 20, altitude_m: 70 });
+    expect(s.drones.map((d) => d.class)).toEqual(['fpv']);
+    expect(s.drones[0].path).toMatchObject({ kind: 'terrain_follow', speed_mps: 20, clearance_m: 20 });
   });
 
   it('rejects a scenario with a duplicate node id', () => {

@@ -41,6 +41,7 @@ F_HARM_LIMIT_HZ = 4000.0
 F0_MIN, F0_MAX, F0_RATIO = 80.0, 1200.0, 1.005
 N_HARM_MAX = 16
 TOL = 0.03
+RELATED_TOL = 0.04  # how near a ratio of two pitches must be to a/b (gap_harm)
 SUB_RATIO = 0.85
 GATE_LOG = math.log10(2.0)  # a candidate needs its fundamental at twice the median level (sub-multiples fail)
 FINE_STEPS = 30  # fine f0 search: +-3 % around the track in 0.1 % steps
@@ -80,6 +81,10 @@ class Params:
     slew_ratio: float = 1.3  # max f0 change within one second of the track
     gap_frames: int = 0  # 0: a lost track resets its age (baseline). >0: a track re-found within this many hops
     #                      near its last f0 keeps its age and harmonic count (a short dropout does not restart the gate)
+    sub_guard: bool = False  # True: no sub-harmonic takeover while the track's own score is 0. In an impulse or gate-failed
+    #                          frame every score is 0 and 0 >= 0.85 * 0 would move the track to its lowest sub-harmonic
+    gap_harm: int = 0  # 0: re-finding must be near the last f0. >0: also at a ratio a/b of the last f0, a and b up to this,
+    #                    since the coarse search can settle on any harmonic of one source (needs gap_frames)
     gate_harm: int = 1  # the comb is kept only if one of the first gate_harm harmonics stands GATE_LOG above its flanks
     #                     (1: the fundamental alone, the baseline). With pink ambient the fundamental is buried first.
     init_frames: int = INIT_FRAMES  # baseline hops of start-up for the median floor (256 ms)
@@ -288,6 +293,12 @@ def harmonic_bits(W, c, geom=DEFAULT, max_h=6, tol=0.04):
     return sum(1 << i for i, h in enumerate(harmonic_hits(W, c, tol, max_h, geom)) if h)
 
 
+def _related(f_a, f_b, limit):
+    """Whether two pitches stand at a ratio a/b with a and b up to limit, within the harmonic tolerance."""
+    ratio = max(f_a, f_b) / min(f_a, f_b)
+    return any(abs(ratio * b / a - 1) <= RELATED_TOL for a in range(1, limit + 1) for b in range(1, a + 1))
+
+
 class Track:
     """Candidate track over frames, given comb scores S and whitened power W. The only part that depends on the
     threshold. A hit is a comb score above theta, with the harmonicity check and the slew gate passed. A track is
@@ -336,7 +347,9 @@ class Track:
                 if ok:
                     age, good = 1, int(h >= p.harm_min)
                     d = self.dormant
-                    if p.gap_frames > 0 and d is not None and self.t - d[3] <= p.gap_frames and abs(c - d[0]) <= g.TRACK_STEP:
+                    if p.gap_frames > 0 and d is not None and self.t - d[3] <= p.gap_frames and (
+                        abs(c - d[0]) <= g.TRACK_STEP or _related(g.F0[c], g.F0[d[0]], p.gap_harm)
+                    ):
                         age, good = d[1] + 1, d[2] + int(h >= p.harm_min)  # the same source, after a short dropout
                     self.dormant = None
                     self.index, self.q, self.last_hit = c, 1, self.t
@@ -364,7 +377,7 @@ class Track:
         if self.q > 0:
             for m in (3, 2, 1):  # sub-harmonic takeover: the lowest candidate that is nearly as strong
                 j = g.SUB[self.index, m]
-                if j >= 0 and S[j] >= SUB_RATIO * S[self.index]:
+                if (not p.sub_guard or S[self.index] > 0) and j >= 0 and S[j] >= SUB_RATIO * S[self.index]:
                     self.index = int(j)
                     break
             if self.q >= p.k_on:

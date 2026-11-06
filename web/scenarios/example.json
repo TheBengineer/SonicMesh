@@ -1,7 +1,7 @@
 {
   "format": "sonicmesh-scenario",
   "version": 1,
-  "name": "Line of 13 nodes, three drones crossing",
+  "name": "Line of 13 nodes, one drone crossing",
   "seed": 20261104,
   "terrain": {
     "size_m": [2000, 1400],
@@ -30,33 +30,11 @@
       "id": 1,
       "class": "fpv",
       "path": {
-        "kind": "crossing",
+        "kind": "terrain_follow",
         "from": { "x": -650, "y": 300 },
         "to": { "x": -250, "y": -500 },
         "speed_mps": 20,
-        "altitude_m": 70
-      }
-    },
-    {
-      "id": 2,
-      "class": "mini",
-      "path": {
-        "kind": "terrain_follow",
-        "from": { "x": 560, "y": 480 },
-        "to": { "x": 300, "y": -500 },
-        "speed_mps": 15,
-        "clearance_m": 40
-      }
-    },
-    {
-      "id": 3,
-      "class": "matrice",
-      "path": {
-        "kind": "terrain_follow",
-        "from": { "x": -60, "y": 560 },
-        "to": { "x": 120, "y": -500 },
-        "speed_mps": 12,
-        "clearance_m": 40
+        "clearance_m": 20
       }
     }
   ]

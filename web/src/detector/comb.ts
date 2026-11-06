@@ -12,6 +12,7 @@ const F0_MAX = 1200;
 const F0_RATIO = 1.005;
 const N_HARM_MAX = 16;
 const TOL = 0.03;
+const RELATED_TOL = 0.04;
 const SUB_RATIO = 0.85;
 const GATE_LOG = Math.log10(2);
 const FINE_STEPS = 30;
@@ -47,6 +48,10 @@ export interface CombParams {
   useSlew: boolean;
   slewRatio: number;
   gapFrames: number;
+  // Above 0, a track re-found at a ratio a/b of its last pitch, a and b up to this, also keeps its age. Needs gapFrames.
+  gapHarm: number;
+  // No sub-harmonic takeover while the track's own score is 0, when 0 >= 0.85 * 0 would otherwise move it.
+  subGuard: boolean;
   gateHarm: number;
   initFrames: number;
   refFrames: number;
@@ -77,6 +82,8 @@ export const DEFAULT_COMB_PARAMS: CombParams = {
   useSlew: false,
   slewRatio: 1.3,
   gapFrames: 0,
+  gapHarm: 0,
+  subGuard: false,
   gateHarm: 1,
   initFrames: 8,
   refFrames: 31,
@@ -96,6 +103,13 @@ function rint(x: number): number {
 
 function clip(v: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, v));
+}
+
+// Whether two pitches stand at a ratio a/b with a and b up to limit.
+function related(fa: number, fb: number, limit: number): boolean {
+  const ratio = Math.max(fa, fb) / Math.min(fa, fb);
+  for (let a = 1; a <= limit; a++) for (let b = 1; b <= a; b++) if (Math.abs((ratio * b) / a - 1) <= RELATED_TOL) return true;
+  return false;
 }
 
 function median(values: Float64Array): number {
@@ -446,7 +460,7 @@ export class CombDetector {
           let age = 1;
           let good = h >= p.harmMin ? 1 : 0;
           const d = this.dormant;
-          if (p.gapFrames > 0 && d && this.t - d.lastHit <= p.gapFrames && Math.abs(c - d.index) <= g.trackStep) {
+          if (p.gapFrames > 0 && d && this.t - d.lastHit <= p.gapFrames && (Math.abs(c - d.index) <= g.trackStep || related(g.f0[c], g.f0[d.index], p.gapHarm))) {
             age = d.age + 1;
             good = d.good + (h >= p.harmMin ? 1 : 0);
           }
@@ -487,7 +501,7 @@ export class CombDetector {
       // Sub-harmonic takeover: the lowest candidate that is nearly as strong.
       for (const m of [3, 2, 1]) {
         const j = g.sub[this.index * 4 + m];
-        if (j >= 0 && s[j] >= SUB_RATIO * s[this.index]) {
+        if ((!p.subGuard || s[this.index] > 0) && j >= 0 && s[j] >= SUB_RATIO * s[this.index]) {
           this.index = j;
           break;
         }
