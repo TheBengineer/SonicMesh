@@ -40,7 +40,7 @@ export function renderIntro(dialog: HTMLDialogElement, onStart: () => void, onHo
   });
 }
 
-export function renderAbout(dialog: HTMLDialogElement): void {
+export function renderAbout(dialog: HTMLDialogElement, onHow: () => void): void {
   dialog.innerHTML = `
     <button class="close" data-close aria-label="Close">Close</button>
     <h2>About SonicMesh</h2>
@@ -48,6 +48,7 @@ export function renderAbout(dialog: HTMLDialogElement): void {
       SonicMesh is a loose perimeter of low-cost microcontroller acoustic nodes. They detect small drones
       crossing at low altitude, and tell you where along the line, which way and when.
     </p>
+    <button class="about-how">How it works</button>
     <p>
       This demo simulates the whole perimeter in the browser: terrain, trees, a drone you can fly, nodes you
       can place, and the gateway. Milestone M0 covers the world, flight, editing, record and replay, and the
@@ -64,6 +65,10 @@ export function renderAbout(dialog: HTMLDialogElement): void {
     </div>
   `;
   closeOnClick(dialog);
+  dialog.querySelector('.about-how')?.addEventListener('click', () => {
+    dialog.close();
+    onHow();
+  });
 }
 
 // `present` holds the ledger ids that the current scene shows.

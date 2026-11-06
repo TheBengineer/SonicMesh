@@ -197,7 +197,7 @@ export function startApp(root: HTMLElement): void {
   const inspectorEl = need<HTMLElement>(root, '#inspector');
   const aboutDialog = need<HTMLDialogElement>(document, '#about-dialog');
   const ledgerDialog = need<HTMLDialogElement>(document, '#ledger-dialog');
-  renderAbout(aboutDialog);
+  renderAbout(aboutDialog, () => openHow(false));
   host.load(scenario);
 
   const frameNow = (): Frame => host.frame ?? blank;
