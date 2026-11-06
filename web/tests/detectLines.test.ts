@@ -3,7 +3,8 @@ import { Line2 } from 'three/examples/jsm/lines/Line2.js';
 import type { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import { describe, expect, it } from 'vitest';
 import { cameraStick } from '../src/input/sticks';
-import { WorldView, toScene } from '../src/scene/worldView';
+import { buildCamp, WorldView, toScene } from '../src/scene/worldView';
+import { SUV, TENT } from '../src/sim/terrain';
 
 const terrain = { height: () => 10 };
 const truthOn = {
@@ -109,5 +110,30 @@ describe('manual flying follows the camera', () => {
 
   it('facing south, forward flies south and up stays up', () => {
     expect(cameraStick({ x: 0, y: 1, z: 0.5 }, { x: 0, y: -1 })).toEqual({ x: 0, y: -1, z: 0.5 });
+  });
+});
+
+describe('tent and SUV', () => {
+  const size = (obj: THREE.Object3D): THREE.Vector3 => {
+    const flat = obj.clone();
+    flat.rotation.y = 0;
+    flat.updateMatrixWorld(true);
+    return new THREE.Box3().setFromObject(flat).getSize(new THREE.Vector3());
+  };
+  const camp = buildCamp({ height: () => 10 } as never);
+
+  it('stand on the ground at their spots', () => {
+    const [tent, suv] = camp.children;
+    expect(tent.position.toArray()).toEqual(toScene(TENT.x, TENT.y, 10).toArray());
+    expect(suv.position.toArray()).toEqual(toScene(SUV.x, SUV.y, 10).toArray());
+  });
+
+  it('are their real size', () => {
+    const [tent, suv] = camp.children.map(size);
+    expect(tent.x).toBeCloseTo(TENT.width_m, 1);
+    expect(tent.z).toBeCloseTo(TENT.length_m, 1);
+    expect(new THREE.Box3().setFromObject(camp.children[0]).max.y).toBeCloseTo(10 + TENT.height_m, 1);
+    expect(suv.z).toBeCloseTo(SUV.length_m, 1);
+    expect(suv.x).toBeLessThan(SUV.width_m + 0.4);
   });
 });

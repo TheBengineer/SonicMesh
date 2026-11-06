@@ -41,22 +41,22 @@
       "id": 2,
       "class": "mini",
       "path": {
-        "kind": "crossing",
+        "kind": "terrain_follow",
         "from": { "x": 560, "y": 480 },
         "to": { "x": 300, "y": -500 },
         "speed_mps": 15,
-        "altitude_m": 80
+        "clearance_m": 40
       }
     },
     {
       "id": 3,
       "class": "matrice",
       "path": {
-        "kind": "crossing",
+        "kind": "terrain_follow",
         "from": { "x": -60, "y": 560 },
         "to": { "x": 120, "y": -500 },
         "speed_mps": 12,
-        "altitude_m": 90
+        "clearance_m": 40
       }
     }
   ]

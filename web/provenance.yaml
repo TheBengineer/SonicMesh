@@ -23,7 +23,7 @@ components:
     name: Trees
     tag: STUB
     milestone: M0
-    summary: "Low-poly trees in random clusters. No scattering and no foliage attenuation."
+    summary: "Low-poly trees in random clusters, plus a tent and an SUV at real size for scale. None of them scatter or absorb sound."
     evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/docs/web-demo-plan.md"
     upgrade: "STUB to MODELLED: ISO 9613-2 foliage excess attenuation, optional, from M1."
     bias: "Cluster layout is random, not surveyed."

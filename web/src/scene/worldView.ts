@@ -7,7 +7,7 @@ import { areaEdge, type BogieArea } from '../lora/locate';
 import type { LoraView } from '../lora/types';
 import type { Selection } from '../selection';
 import type { NodeKind } from '../sim/scenario';
-import { groundColor, placeTrees, type Terrain } from '../sim/terrain';
+import { groundColor, placeTrees, SUV, TENT, type Terrain } from '../sim/terrain';
 import { DRONE_CLASSES, type World, type WorldState } from '../sim/world';
 import type { DroneClass } from '../sim/scenario';
 import type { Point, ScreenPos } from '../ui/popup';
@@ -164,6 +164,58 @@ function buildRoad(t: Terrain): THREE.Mesh {
   geo.setIndex(idx);
   geo.computeVertexNormals();
   return new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color: 0x3b3f44, side: THREE.DoubleSide }));
+}
+
+// Visual only, at real size for scale: a 5 by 10 m tent and a 4.8 m SUV. Walls and body reach below the ground, so that
+// a slope leaves no gap.
+const SINK_M = 1.5;
+
+function solid(geo: THREE.BufferGeometry, color: number, x: number, y: number, z: number): THREE.Mesh {
+  const mesh = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color, flatShading: true }));
+  mesh.position.set(x, y, z);
+  mesh.raycast = () => {};
+  return mesh;
+}
+
+function buildTent(): THREE.Group {
+  const [halfW, len, wallH, ridgeH] = [TENT.width_m / 2, TENT.length_m, 1.6, TENT.height_m];
+  const color = 0x4b5320;
+  const profile = new THREE.Shape([new THREE.Vector2(-halfW, 0), new THREE.Vector2(halfW, 0), new THREE.Vector2(0, ridgeH - wallH)]);
+  const roof = new THREE.ExtrudeGeometry(profile, { depth: len, bevelEnabled: false });
+  roof.translate(0, 0, -len / 2);
+  const group = new THREE.Group();
+  group.add(solid(new THREE.BoxGeometry(2 * halfW, wallH + SINK_M, len), color, 0, (wallH - SINK_M) / 2, 0), solid(roof, 0x565e28, 0, wallH, 0));
+  return group;
+}
+
+function buildSuv(): THREE.Group {
+  const [len, wide] = [SUV.length_m, SUV.width_m];
+  const group = new THREE.Group();
+  const bodyTop = 1.1;
+  group.add(
+    solid(new THREE.BoxGeometry(wide, bodyTop + SINK_M - 0.35, len), 0x3d4436, 0, (bodyTop + 0.35 - SINK_M) / 2, 0),
+    solid(new THREE.BoxGeometry(wide * 0.92, SUV.height_m - bodyTop, len * 0.62), 0x2b3128, 0, (SUV.height_m + bodyTop) / 2, -len * 0.1),
+  );
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      const wheel = solid(new THREE.CylinderGeometry(0.38, 0.38, 0.28, 12), 0x15181a, (sx * wide) / 2, 0.38, (sz * len) / 3);
+      wheel.rotation.z = Math.PI / 2;
+      group.add(wheel);
+    }
+  }
+  return group;
+}
+
+export function buildCamp(t: Terrain): THREE.Group {
+  const camp = new THREE.Group();
+  const place = (obj: THREE.Group, at: { x: number; y: number; heading_deg: number }): void => {
+    obj.position.copy(toScene(at.x, at.y, t.height(at.x, at.y)));
+    obj.rotation.y = (at.heading_deg * Math.PI) / 180;
+    camp.add(obj);
+  };
+  place(buildTent(), TENT);
+  place(buildSuv(), SUV);
+  return camp;
 }
 
 function buildTrees(t: Terrain): THREE.InstancedMesh {
@@ -348,7 +400,7 @@ export class WorldView {
     disposeGroup(this.staticGroup);
     this.staticGroup.clear();
     this.terrainMesh = buildTerrain(world.terrain);
-    this.staticGroup.add(this.terrainMesh, buildRoad(world.terrain), buildTrees(world.terrain));
+    this.staticGroup.add(this.terrainMesh, buildRoad(world.terrain), buildTrees(world.terrain), buildCamp(world.terrain));
     this.nodeGroup.clear();
     this.nodeMeshes.clear();
     this.droneGroup.clear();
@@ -763,6 +815,16 @@ export class WorldView {
     ctx.moveTo(sx(-sw / 2), sy(terrain.roadY));
     ctx.lineTo(sx(sw / 2), sy(terrain.roadY));
     ctx.stroke();
+    // The tent and SUV at their real size, which is what they are here to show.
+    for (const [item, color] of [[TENT, '#6b7530'], [SUV, '#c8ccc0']] as const) {
+      const a = (item.heading_deg * Math.PI) / 180;
+      ctx.save();
+      ctx.translate(sx(item.x), sy(item.y));
+      ctx.rotate(a);
+      ctx.fillStyle = color;
+      ctx.fillRect((-item.width_m * scale) / 2, (-item.length_m * scale) / 2, item.width_m * scale, item.length_m * scale);
+      ctx.restore();
+    }
 
     if (lora) {
       for (const p of lora.packets) {

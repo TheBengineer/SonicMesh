@@ -105,6 +105,10 @@ export function groundColor(t: Terrain, x: number, y: number): [number, number, 
   return [(0.2 + 0.3 * f) * shade, (0.34 + 0.24 * f) * shade, (0.17 + 0.14 * f) * shade];
 }
 
+// Visual only. Behind the line near the demo's gateway, for scale. Heading is clockwise from north, along the length.
+export const TENT = { x: 62, y: -128, width_m: 5, length_m: 10, height_m: 3, heading_deg: 20 };
+export const SUV = { x: 82, y: -112, width_m: 1.9, length_m: 4.8, height_m: 1.8, heading_deg: 75 };
+
 // Visual only. Trees come from the seed, not from the sim state.
 export function placeTrees(t: Terrain): Tree[] {
   const rng = createRng(t.seed ^ 0x9e3779b9);
