@@ -760,9 +760,12 @@ function statusScene(ui: HTMLElement): Scene {
   };
 }
 
-// The photo of a mock node. To show it, put the file in web/public and set this to its path, such as '/mock-node.jpg'.
-// Until then the step shows a labelled sketch.
-const NODE_PHOTO: { src: string; alt: string; caption: string } | null = null;
+// The photo of a mock node, from web/public. Until it is set the step shows a labelled sketch.
+const NODE_PHOTO: { src: string; alt: string; caption: string } | null = {
+  src: '/mock-node.webp',
+  alt: 'A mock node on a wooden table: a small board with a LiPo battery, a microphone on a short lead, and a wire antenna, next to a solar panel.',
+  caption: 'A mock node. All of it fits in the solar panel case.',
+};
 
 // Doc 08 section 9: one detector node, small-quantity prices, no shipping or enclosure. The battery is an estimate.
 export const NODE_PARTS = [
