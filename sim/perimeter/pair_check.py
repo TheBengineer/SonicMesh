@@ -26,6 +26,7 @@ import json
 import sys
 import time
 from collections import Counter
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -58,6 +59,9 @@ _MASTER = None
 
 
 def _init(master):
+    import fa as _fa
+
+    _fa._limit_memory()  # 3 GB address space per worker
     global _MASTER
     _MASTER = master
 
@@ -94,14 +98,15 @@ def _job(args):
         j = i + 1
         if j not in on:
             continue
-        for t1, f1, _ in on[i]:
+        for t1, f1, _, m1 in on[i]:
             if not (x["t_in"] <= t1 <= x["t_out"]):
                 continue
-            for t2, f2, _ in on[j]:
+            for t2, f2, _, m2 in on[j]:
                 if not (x["t_in"] <= t2 <= x["t_out"]):
                     continue
                 dop = doppler_ratio(c, i, j, 0.5 * (t1 + t2))
                 pairs.append(dict(gap=abs(t1 - t2), f1=f1, f2=f2, ratio=ratio_label(f1, f2),
+                                  lines_ok=bool(fa.ratio_lines_ok(f1, m1, f2, m2)),
                                   speed=c["speed"], doppler=dop, obs=(f1 / f2 if f2 > 0 else 0.0),
                                   doppler_ok=bool(f2 > 0 and abs((f1 / f2) / dop - 1) <= fa.GATE_F0_TOL)))
                 break
@@ -113,8 +118,12 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--crossings", type=int, default=40, help="per class")
     ap.add_argument("--procs", type=int, default=6)
+    ap.add_argument("--n-fft", type=int, default=1024)
+    ap.add_argument("--hop", type=int, default=None, help="default n_fft / 2")
+    ap.add_argument("--theta", type=float, default=0.10)
     ap.add_argument("--json", default=None)
     args = ap.parse_args()
+    R.CHOSEN = replace(R.CHOSEN, n_fft=args.n_fft, hop=args.hop or args.n_fft // 2, theta=args.theta)
     t0 = time.time()
     master, _ = rural_scene(1234, 0.25, (1, 2, 3))
     from multiprocessing import Pool
@@ -139,6 +148,7 @@ def main():
             win_ok = [p for p in pairs if p["gap"] <= fa.GATE_WINDOW_S]
             f0_ok = [p for p in pairs if p["ratio"] in ("1", "2", "1/2")]
             both_ok = [p for p in win_ok if p["ratio"] in ("1", "2", "1/2")]
+            lines_ok = [p for p in win_ok if p["lines_ok"]]
             rat = Counter(p["ratio"] for p in pairs)
             other = [p for p in pairs if p["ratio"] == "other"]
             dop_ok_other = sum(p["doppler_ok"] for p in other)
@@ -146,11 +156,13 @@ def main():
             out[key] = dict(crossings=len(rs), gateway_detected=sum(r["detected"] for r in rs), both_detect_pairs=n_pairs,
                             within_window=len(win_ok), f0_octave_ok=len(f0_ok), both_rules=len(both_ok),
                             ratio_counts=dict(rat), other_pairs=len(other), other_explained_by_doppler=dop_ok_other,
+                            lines_ok_within_window=len(lines_ok), lines_ok_any=sum(p["lines_ok"] for p in pairs),
                             doppler_ok_all=sum(p["doppler_ok"] for p in pairs), median_gap_s=float(np.median([p["gap"] for p in pairs]))
                             if pairs else None)
             print(f"{key}: crossings {len(rs)}, gateway detected {out[key]['gateway_detected']}, both-detect pairs "
                   f"{n_pairs}, within 30 s {len(win_ok)}, f0 ok (1, 2, 1/2) {len(f0_ok)}, both {len(both_ok)}; "
-                  f"ratios {dict(rat)}; 'other' pairs {len(other)}, of which Doppler-explained {dop_ok_other}",
+                  f"ratios {dict(rat)}; 'other' pairs {len(other)}, of which Doppler-explained {dop_ok_other}; "
+                  f"lines rule within window {len(lines_ok)}",
                   flush=True)
     out["seconds"] = time.time() - t0
     print(f"total {out['seconds'] / 60:.1f} min", flush=True)

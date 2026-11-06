@@ -135,3 +135,61 @@ def test_gate_harm_lets_a_buried_fundamental_pass_on_its_second_harmonic():
     assert scores[1] == 0.0
     assert scores[2] > 0.0
     assert k > LO_BIN
+
+
+def test_to_frames_keeps_time_constants_in_seconds():
+    from detector.detector import Params, to_frames
+
+    base = to_frames(Params())  # baseline 1024 / 512: nothing changes
+    assert (base.age_min, base.hold_frames, base.m_win, base.k_on, base.impulse_hold) == (62, 32, 16, 6, 4)
+    assert base.smooth == 0.75 and base.floor_up_db == 0.1 and base.floor_down_db == 0.5
+    assert (base.init_frames, base.ref_frames, base.gap_frames) == (8, 31, 0)
+    # 2048 / 1024: each count of 32 ms hops halves, each per-hop rate doubles, smoothing is squared
+    long = to_frames(Params(n_fft=2048, hop=1024, gap_frames=31))
+    assert (long.age_min, long.hold_frames, long.m_win, long.k_on) == (31, 16, 8, 3)
+    assert (long.impulse_hold, long.gap_frames, long.ref_frames, long.init_frames) == (2, 16, 16, 4)
+    assert long.floor_up_db == pytest.approx(0.2) and long.floor_down_db == pytest.approx(1.0)
+    assert long.smooth == pytest.approx(0.75**2)
+    # 4096 / 2048: the start-up never uses fewer than three frames
+    assert to_frames(Params(n_fft=4096, hop=2048)).init_frames == 3
+
+
+def test_geometry_bins_and_track_step_follow_the_frame():
+    from detector.detector import geometry
+
+    g1, g2 = geometry(1024, 512), geometry(2048, 1024)
+    assert (g1.NB, g1.LO_BIN, g1.TRACK_STEP) == (257, 6, 6)
+    assert (g2.NB, g2.LO_BIN, g2.TRACK_STEP) == (513, 11, 12)  # 80 Hz at 7.8 Hz bins; drift 3 % per 32 ms
+    assert abs(g2.DF - 7.8125) < 1e-9
+    # comb window minimum: one 1024-bin (15.6 Hz) at baseline, two bins at 2048 (same Hz); at 250 Hz, +-2 bins
+    c = int(np.argmin(np.abs(g2.F0 - 250.0)))
+    assert g2.TAB["hi1"][c, 0] - g2.TAB["lo"][c, 0] == 5
+
+
+def test_detector_finds_a_drone_with_a_2048_frame():
+    from detector.detector import Detector, Params
+
+    x, pre = mixture("mini", 10.0, seconds=30.0)
+    r = Detector(Params(n_fft=2048, hop=1024)).run(x)
+    sl = slice(pre // 1024 + 10, None)
+    on = r["on"][sl]
+    assert on.mean() > 0.8
+    # Known limit (doc 07, round 3): at 2048 samples this 10 dB mini track sometimes locks on the third sub-multiple
+    # (85 Hz) instead of the fundamental (250 Hz). So the test asserts the lock is on the fundamental or a sub-multiple.
+    f0 = r["f0"][sl][on]
+    ratio = CLASS["mini"][0] / f0[f0 > 0]
+    assert np.mean(np.isclose(ratio, np.round(ratio), rtol=0.05) & (np.round(ratio) <= 3)) > 0.95
+
+
+def test_harmonic_bits_mark_the_harmonics_present():
+    from detector.detector import F0, GRID, harmonic_bits, DEFAULT
+
+    f0_hz = 250.0
+    c = int(np.argmin(np.abs(F0 - f0_hz)))
+    P = np.full(DEFAULT.NB, 1e-9)
+    for h in (1, 3, 4):  # harmonics 1, 3 and 4 stand 20 dB above the floor, 2 does not
+        P[int(round(h * f0_hz / DEFAULT.DF))] = 1e-7
+    W = P / 1e-9
+    bits = harmonic_bits(W, c, DEFAULT)
+    assert bits == (1 << 0) | (1 << 2) | (1 << 3)
+    assert GRID > c

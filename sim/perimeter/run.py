@@ -49,7 +49,8 @@ from acoustics.noise import white, wind  # noqa: E402
 from acoustics.scene import padded, render_mic  # noqa: E402
 from acoustics.source import drone_source  # noqa: E402
 from acoustics.turbulence import turbulence  # noqa: E402
-from detector.detector import HOP, N, Params  # noqa: E402
+from detector.detector import Params, geometry  # noqa: E402
+from dataclasses import replace  # noqa: E402
 
 NODES = 13
 SPACING_M = 350.0
@@ -74,6 +75,8 @@ CHOSEN = Params(theta=0.10)
 SEEDS = {
     "held": dict(cross=4040, master=7777, fa_rural=4000, fa_dense=5000),
     "fresh": dict(cross=5050, master=8888, fa_rural=8000, fa_dense=9000),
+    # round 3 (doc 07 section 11): new crossing and background seeds, never used by an earlier run. Folds 4-5 clips.
+    "r3": dict(cross=12012, master=12013, fa_rural=12100, fa_dense=12200),
 }
 THETAS = [0.10, 0.12, 0.14, 0.16, 0.18, 0.20, 0.23, 0.26, 0.30]
 # Node-to-node timing model (ASSUMED, from docs/protocol-v0.md 3a). Event superframe 500 ms, idle 4 s, backbone 500 ms
@@ -92,6 +95,7 @@ MASTER = None  # background bed for the crossing workers (set by the pool initia
 
 def _init_worker(master):
     global MASTER
+    fa._limit_memory()  # 3 GB address space per worker, as in the false-alarm pool
     MASTER = master
 
 
@@ -100,12 +104,42 @@ def _crossing_job(args):
     return run_crossing(c, MASTER, params_list)
 
 
-def map_crossings(crossings, master, params_list, procs=6):
-    """run_crossing over a list of crossings in worker processes (each worker one BLAS thread)."""
+CKPT = None  # checkpoint root (--ckpt): each run writes its results under a subdirectory and resumes from it
+
+
+def ckpt_dir(name):
+    return os.path.join(CKPT, name) if CKPT else None
+
+
+def map_crossings(crossings, master, params_list, procs=6, ckpt=None):
+    """run_crossing over a list of crossings in worker processes (each worker one BLAS thread), in crossing order.
+
+    With ckpt (a directory), each crossing's result is written when it finishes; a rerun with the same directory
+    computes only the missing crossings. The crossings and parameters must be the same for a rerun."""
+    import pickle
     from multiprocessing import Pool
 
-    with Pool(procs, initializer=_init_worker, initargs=(master,)) as pool:
-        return pool.map(_crossing_job, [(c, params_list) for c in crossings], chunksize=1)
+    if ckpt:
+        os.makedirs(ckpt, exist_ok=True)
+    res = [None] * len(crossings)
+    todo = []
+    for idx, c in enumerate(crossings):
+        path = os.path.join(ckpt, f"c{c['id']:05d}.pkl") if ckpt else None
+        if path and os.path.exists(path):
+            with open(path, "rb") as fh:
+                res[idx] = pickle.load(fh)
+        else:
+            todo.append((idx, c, path))
+    if todo:
+        with Pool(procs, initializer=_init_worker, initargs=(master,)) as pool:
+            for (idx, c, path), r in zip(todo, pool.imap(_crossing_job, [(c, params_list) for _, c, _ in todo])):
+                res[idx] = r
+                if path:
+                    tmp = path + ".tmp"
+                    with open(tmp, "wb") as fh:
+                        pickle.dump(r, fh)
+                    os.replace(tmp, path)
+    return res
 
 
 def both_pairs_in(node_onsets, span):
@@ -115,8 +149,8 @@ def both_pairs_in(node_onsets, span):
         j = i + 1
         if j not in node_onsets:
             continue
-        a = [t for t, _, _ in node_onsets[i] if span[0] <= t <= span[1]]
-        b = [t for t, _, _ in node_onsets[j] if span[0] <= t <= span[1]]
+        a = [o[0] for o in node_onsets[i] if span[0] <= o[0] <= span[1]]
+        b = [o[0] for o in node_onsets[j] if span[0] <= o[0] <= span[1]]
         if a and b:
             out.append((i, j, a[0], b[0]))
     return out
@@ -199,18 +233,19 @@ def run_crossing(c, master, params_list):
                          block=BLOCK * 10, delay_fn=dfn, gain_fn=gfn)
         m = n_b - n_a
         sig = sig + master[off : off + m] + wind(rng, m, c["wind"]) + white(rng, m, SELF_NOISE_DB)
-        on, f0 = fa.detector_flags(sig, params_list)
-        t_frame = (n_a + np.arange(on.shape[1]) * HOP + N / 2) / FS
+        on, f0, mask = fa.detector_flags(sig, params_list)
+        g = geometry(params_list[0].n_fft, params_list[0].hop)
+        t_frame = (n_a + np.arange(on.shape[1]) * g.HOP + g.N / 2) / FS
         for k in range(len(params_list)):
-            node_onsets[k][i] = fa.onsets_of(on[k], f0[k], t_frame)
-            for t, _, _ in node_onsets[k][i]:
+            node_onsets[k][i] = fa.onsets_of(on[k], f0[k], t_frame, mask=mask[k])
+            for t, *_ in node_onsets[k][i]:
                 if t_in <= t <= t_out:
                     node_dist[k].setdefault(i, float(d3[min(int(round(t / TICK_S)), len(d3) - 1)]))
                     break
     out = []
     for k in range(len(params_list)):
         pairs = gateway_pairs_in(node_onsets[k], (t_in, t_out), NEW_RULE)
-        node_hit = any(any(t_in <= t <= t_out for t, _, _ in v) for v in node_onsets[k].values())
+        node_hit = any(any(t_in <= o[0] <= t_out for o in v) for v in node_onsets[k].values())
         out.append(dict(cls=c["cls"], alt=c["alt"], wind=c["wind"], detected=bool(pairs), node_detected=node_hit,
                         pairs=pairs, t_in=float(t_in), t_out=float(t_out), onsets=node_onsets[k],
                         node_dist=node_dist[k]))
@@ -218,13 +253,13 @@ def run_crossing(c, master, params_list):
 
 
 def gateway_pairs_in(node_onsets, span, rule):
-    """Gateway pairs under a rule (window s, f0 ratios) whose later onset falls in span. Rule is applied by value."""
-    old = (fa.GATE_WINDOW_S, fa.GATE_OCTAVE)
+    """Gateway pairs under a rule (window s, f0 ratios, match mode) whose later onset falls in span."""
+    old = (fa.GATE_WINDOW_S, fa.GATE_OCTAVE, fa.GATE_MODE)
     try:
-        fa.GATE_WINDOW_S, fa.GATE_OCTAVE = rule
+        fa.GATE_WINDOW_S, fa.GATE_OCTAVE, fa.GATE_MODE = rule
         pairs = fa.gateway_pairs(node_onsets)
     finally:
-        fa.GATE_WINDOW_S, fa.GATE_OCTAVE = old
+        fa.GATE_WINDOW_S, fa.GATE_OCTAVE, fa.GATE_MODE = old
     return [p for p in pairs if span[0] <= max(p[2], p[3]) <= span[1]]
 
 
@@ -250,7 +285,7 @@ def fa_rates(onsets_by_node, hours):
     """Node-level alarms per node-day, and gateway alarms per km per day (pairs as in the gateway rule)."""
     node_alarms = sum(len(v) for v in onsets_by_node.values())
     node_hours = hours * NODES
-    gw = len(fa.gateway_events(onsets_by_node))
+    gw = len(gateway_pairs_in(onsets_by_node, (-1e18, 1e18), NEW_RULE))  # the gateway rule in use (f0 or lines)
     return dict(node_alarms=node_alarms, node_per_node_day=node_alarms / node_hours * 24.0,
                 gateway_alarms=gw, per_km_day=gw / (hours * LINE_KM) * 24.0)
 
@@ -293,23 +328,25 @@ def score(res, lo=0.0, hi=1e9):
                 node=(sum(r["node_detected"] for r in sel) / n if n else None))
 
 
-OLD_RULE = (10.0, (1.0,))  # the rule before this change: 10 s window, f0 within 12 % without octave allowance
-NEW_RULE = (30.0, (1.0, 2.0, 0.5))  # current: 30 s window, f0 within 12 % directly or an octave apart
+OLD_RULE = (10.0, (1.0,), "f0")  # round 1: 10 s window, f0 within 12 % without octave allowance
+NEW_RULE = (30.0, (1.0, 2.0, 0.5), "f0")  # round 2: 30 s window, f0 within 12 % directly or an octave apart
+LINES_RULE = (30.0, (1.0, 2.0, 0.5), "lines")  # round 3 candidate: 30 s window, shared harmonic lines (fa.pair_ok)
 
 
 def tune(args, master):
     n_cross, hours = args.crossings or 120, args.hours or 3.0
-    params = [Params(theta=th) for th in THETAS]
-    print(f"TUNE folds 1-3: {n_cross} crossings, bed {hours} h per node, thetas {THETAS}", flush=True)
+    params = [replace(CHOSEN, theta=th) for th in THETAS]  # the frame of CHOSEN (set by --n-fft / --hop)
+    print(f"TUNE folds 1-3, frame {CHOSEN.n_fft}/{CHOSEN.hop}: {n_cross} crossings, bed {hours} h per node, thetas {THETAS}", flush=True)
     res_by = {th: [] for th in THETAS}
     t0 = time.time()
-    for r in map_crossings(sample_crossings(n_cross, seed=2026), master, params):
+    for r in map_crossings(sample_crossings(n_cross, seed=2026), master, params, ckpt=ckpt_dir("tune_cross")):
         if r:
             for th, x in zip(THETAS, r):
                 res_by[th].append(x)
     print(f"crossings done in {time.time() - t0:.0f} s", flush=True)
-    bed = fa.scene_alarms("rural", params, hours, (1, 2, 3), seed=6000, nodes=NODES)
+    bed = fa.scene_alarms("rural", params, hours, (1, 2, 3), seed=6000, nodes=NODES, ckpt=ckpt_dir("tune_fa"))
     print("theta | node Pd<100 | gateway Pd<100 old / new | node FA per node-day | gateway FA per km-day old / new")
+    print("(per-class node and gateway Pd below 100 m are in the JSON, key by_class)")
     table = {}
     for th, onsets in zip(THETAS, bed):
         sel = [r for r in res_by[th] if r["alt"] < 100]
@@ -319,7 +356,11 @@ def tune(args, master):
         node_pd = sum(r["node_detected"] for r in sel) / n
         fa_new = fa_rates(onsets, hours)
         old_ev = len(gateway_events_rule(onsets, OLD_RULE))
-        table[th] = dict(n_below100=n, node_pd=node_pd, gw_pd_old=old_pd, gw_pd_new=new_pd,
+        by_cls = {c: dict(n=len([r for r in sel if r["cls"] == c]),
+                          node=sum(r["node_detected"] for r in sel if r["cls"] == c) / max(1, len([r for r in sel if r["cls"] == c])),
+                          gateway=sum(r["detected"] for r in sel if r["cls"] == c) / max(1, len([r for r in sel if r["cls"] == c])))
+                  for c in CLASSES}
+        table[th] = dict(n_below100=n, node_pd=node_pd, gw_pd_old=old_pd, gw_pd_new=new_pd, by_class=by_cls,
                          node_alarms=fa_new["node_alarms"], node_per_node_day=fa_new["node_per_node_day"],
                          gw_old_events=old_ev, gw_old_per_km_day=old_ev / (hours * LINE_KM) * 24.0,
                          gw_new_events=fa_new["gateway_alarms"], gw_new_per_km_day=fa_new["per_km_day"])
@@ -341,13 +382,13 @@ def ablate(args, master):
     n_cross = args.crossings or 120
     sets = {
         "all on (CHOSEN)": CHOSEN,
-        "no track age": Params(theta=CHOSEN.theta, use_age=False),
-        "age 1 s (16 frames)": Params(theta=CHOSEN.theta, age_min=16),
-        "good_frac 0": Params(theta=CHOSEN.theta, good_frac=0.0),
-        "no harmonicity": Params(theta=CHOSEN.theta, use_harm=False),
-        "slew on (for reference)": Params(theta=CHOSEN.theta, use_slew=True),
+        "no track age": replace(CHOSEN, use_age=False),
+        "age 1 s (16 frames)": replace(CHOSEN, age_min=16),  # 16 baseline hops is 0.5 s; label kept from round 2
+        "good_frac 0": replace(CHOSEN, good_frac=0.0),
+        "no harmonicity": replace(CHOSEN, use_harm=False),
+        "slew on (for reference)": replace(CHOSEN, use_slew=True),
     }
-    no_imp = {"no impulse rejection": Params(theta=CHOSEN.theta, use_impulse=False)}
+    no_imp = {"no impulse rejection": replace(CHOSEN, use_impulse=False)}
     names = list(sets) + list(no_imp)
     res = {k: [] for k in names}
     cross = sample_crossings(n_cross, seed=2026)
@@ -388,7 +429,8 @@ def held_out_crossings(args, master):
     res = []
     lat_event, lat_idle = [], []
     rng_lat = np.random.default_rng(99)
-    for r in map_crossings(sample_crossings(n_cross, seed=seeds["cross"]), master, [CHOSEN]):
+    for r in map_crossings(sample_crossings(n_cross, seed=seeds["cross"]), master, [CHOSEN],
+                           ckpt=ckpt_dir(f"{args.seeds}_cross")):
         if r:
             x = r[0]
             res.append(x)
@@ -406,6 +448,11 @@ def held_out_crossings(args, master):
             print(f"  {row['cls']:8s} {row['alt']:10s} {row['wind']:9s} n={row['n']:3d} "
                   f"detected={row['detected']:3d} Pd={row['pd']:.2f}")
     print("gateway Pd by altitude:", {ab: score(res, a0, a1)["gateway"] for ab, a0, a1 in ALT_BANDS + [("<100", 0, 100)]})
+    for c in CLASSES:  # per class, below 100 m: node Pd (any node on) and gateway Pd
+        sel = [r for r in res if r["cls"] == c and r["alt"] < 100]
+        n = len(sel)
+        print(f"class {c:8s} below 100 m: n={n} node Pd={sum(r['node_detected'] for r in sel) / max(n, 1):.2f} "
+              f"gateway Pd={sum(r['detected'] for r in sel) / max(n, 1):.2f}", flush=True)
     print("node Pd by altitude:", {ab: score(res, a0, a1)["node"] for ab, a0, a1 in ALT_BANDS + [("<100", 0, 100)]})
     print("confirmation latency after the later onset (ASSUMED timing model; s), pairs where both nodes detect:")
     lat_out = {}
@@ -425,7 +472,13 @@ def held_out_crossings(args, master):
             print(f"  {key:18s} boundary pairs {len(bw):3d}: wait med {lat_out[key]['boundary_wait_med']}, "
                   f"from entry med {lat_out[key]['boundary_from_entry_med']}, p90 {lat_out[key]['boundary_from_entry_p90']}",
                   flush=True)
+    by_class = {c: {"n": len([r for r in res if r["cls"] == c and r["alt"] < 100])} for c in CLASSES}
+    for c in CLASSES:
+        sel = [r for r in res if r["cls"] == c and r["alt"] < 100]
+        n = max(len(sel), 1)
+        by_class[c].update(node=sum(r["node_detected"] for r in sel) / n, gateway=sum(r["detected"] for r in sel) / n)
     return dict(crossings=len(res), pd_below100=score(res, 0, 100), pd_all=score(res, 0, 1e9), latency=lat_out,
+                by_class_below100=by_class,
                 seconds=time.time() - t0)
 
 
@@ -436,12 +489,13 @@ def held_out_fa(args):
     seeds = SEEDS[args.seeds]
     out = {}
     t0 = time.time()
-    rural = fa.scene_alarms("rural", [CHOSEN], hours, (4, 5), seed=seeds["fa_rural"], nodes=NODES)[0]
+    rural = fa.scene_alarms("rural", [CHOSEN], hours, (4, 5), seed=seeds["fa_rural"], nodes=NODES,
+                            ckpt=ckpt_dir(f"{args.seeds}_fa_rural_{hours}h"))[0]
     fr = fa_rates(rural, hours)
     fr["upper95_per_km_day"] = upper_bound_per_km_day(fr["gateway_alarms"], hours)
     cats = {}
     for lst in rural.values():
-        for _, _, cat in lst:
+        for *_, cat in lst:
             cats[cat] = cats.get(cat, 0) + 1
     fr["node_alarms_by_class"] = cats
     out["rural"] = fr
@@ -451,7 +505,8 @@ def held_out_fa(args):
           flush=True)
     print("  node alarms by sound class:", sorted(cats.items(), key=lambda kv: -kv[1]), flush=True)
     t0 = time.time()
-    dense = fa.scene_alarms("dense", [CHOSEN], dense_hours, (4, 5), seed=seeds["fa_dense"], nodes=NODES)[0]
+    dense = fa.scene_alarms("dense", [CHOSEN], dense_hours, (4, 5), seed=seeds["fa_dense"], nodes=NODES,
+                            ckpt=ckpt_dir(f"{args.seeds}_fa_dense_{dense_hours}h"))[0]
     fd = fa_rates(dense, dense_hours)
     fd["upper95_per_km_day"] = upper_bound_per_km_day(fd["gateway_alarms"], dense_hours)
     out["dense"] = fd
@@ -485,8 +540,27 @@ def main():
                     help="held-out mode only: crossings (Pd and timing) or fa (false alarms), separately")
     ap.add_argument("--seeds", default="held", choices=sorted(SEEDS),
                     help="held-out mode only: held (first held-out run) or fresh (new seeds, doc 07 section 9)")
+    ap.add_argument("--n-fft", type=int, default=None, help="frame length in samples (default 1024, round 2)")
+    ap.add_argument("--hop", type=int, default=None, help="hop in samples (default n_fft / 2)")
+    ap.add_argument("--theta", type=float, default=None, help="threshold of CHOSEN (held-out and ablation modes)")
+    ap.add_argument("--floor-up", type=float, default=None,
+                    help="floor rise of CHOSEN, dB per baseline hop of 32 ms (held-out and ablation modes)")
+    ap.add_argument("--gate", default="f0", choices=["f0", "lines"],
+                    help="gateway match: f0 (round 2 rule) or lines (round 3 candidate)")
+    ap.add_argument("--ckpt", default=None,
+                    help="checkpoint directory: results are saved as they finish and a rerun resumes from them")
     ap.add_argument("--json", default=None)
     args = ap.parse_args()
+    global CHOSEN, NEW_RULE, CKPT
+    CKPT = args.ckpt
+    NEW_RULE = (NEW_RULE[0], NEW_RULE[1], args.gate)
+    if args.n_fft or args.hop:
+        n_fft = args.n_fft or 1024
+        CHOSEN = replace(CHOSEN, n_fft=n_fft, hop=args.hop or n_fft // 2)
+    if args.theta is not None:
+        CHOSEN = replace(CHOSEN, theta=args.theta)
+    if args.floor_up is not None:
+        CHOSEN = replace(CHOSEN, floor_up_db=args.floor_up)
     if args.quick:
         args.crossings = args.crossings or 12
         args.hours = args.hours or 0.25

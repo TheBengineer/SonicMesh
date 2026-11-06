@@ -66,3 +66,23 @@ def test_hold_threshold_keeps_an_acquired_track_alive():
 
     assert run(0.5) > 0
     assert run(1.0) == 0
+
+
+def test_ratio_lines_accepts_an_octave_lock_backed_by_shared_lines():
+    # node A locked on 2 x f0 (lines 2, 4, 6 of 250 Hz); node B on the fundamental, all six harmonics present
+    assert fa.ratio_lines_ok(500.0, 0b111, 250.0, 0b111111)
+    # the same pair with only one shared line is not enough
+    assert not fa.ratio_lines_ok(500.0, 0b001, 250.0, 0b000010)
+
+
+def test_ratio_lines_accepts_a_third_harmonic_lock_and_rejects_an_unrelated_pair():
+    # node A on 3/2 of node B's f0: harmonic 2 of A is harmonic 3 of B, and harmonic 4 of A is harmonic 6 of B
+    assert fa.ratio_lines_ok(375.0, 0b1111, 250.0, 0b111111)
+    # f0 ratio 1.16 is not near a small-integer ratio within 12 % (1 is 16 % away): rejected
+    assert not fa.ratio_lines_ok(290.0, 0b111111, 250.0, 0b111111)
+
+
+def test_lines_mode_gateway_pair_uses_the_masks():
+    on = {0: [(10.0, 500.0, None, 0b111)], 1: [(12.0, 250.0, None, 0b111111)]}
+    assert len(fa.gateway_events(on, mode="lines")) == 1
+    assert len(fa.gateway_events(on, mode="f0")) == 1  # an octave apart is accepted by the f0 rule too

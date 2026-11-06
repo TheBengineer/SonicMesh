@@ -11,12 +11,28 @@ detector [`sim/detector/detector.py`](../../sim/detector/detector.py), gateway r
 100 m altitude, and at most 1 false alarm per km of perimeter per day? If not, what is the best trade-off, and how
 far off is it?
 
-**Short answer: no.** The exit criteria are not met. The best setting found detects about 1 crossing in 5 below
-100 m on the held-out folds, and the false-alarm rate is not yet bounded below 1 per km per day. Round 2 (section 10,
-2026-11-05) finds the cause of the mini and matrice losses in the rural bed (the ambient level, not the events) and
-tests detector changes; none meets the criteria, and the fresh-data result is no better than the first held-out run.
+**Short answer: no.** The exit criteria are not met. Round 3 (section 11, 2026-11-05) changes the picture on the
+false-alarm side and not on the Pd side. A 8192-sample frame (512 ms window, 256 ms hop) with a slower floor rise
+(F2) gives 0 gateway false alarms in 223 node-hours on the rural bed (bound 1.00 per km-day, meeting the target at 95 %),
+and raises gateway Pd below 100 m on a new draw from 0.10 to 0.29. But gateway Pd is still far below 95 %. The gain
+is almost all FPV: mini and matrice gateway Pd below 100 m stays at 0 on folds 1-3 at every frame length and threshold,
+and on the new draw it is 0.13 and 0.00. The dense stress bed gives 7 times more gateway alarms with F2 than with the
+round-2 setting. F2 is kept as the rural candidate and is not made the default (section 11.6).
 
 ## Answers in brief
+
+0. **Round 3 (section 11, 2026-11-05).** Frame length, neighbour matching, floor and gate retests, and a new draw, all
+   run in this round with the current code. Longer frames raise line SNR
+   for mini and matrice under the pink ambient (matrice node Pd under pink 0.25 at 1024 samples, 1.00 at 2048; mini 0.22,
+   0.67, 0.94, 0.97 at 1024, 2048, 4096, 8192). The gain stops at 4096 for mini and at 2048 for matrice; FPV's line
+   score at the true f0 collapses at 8192. Node alarm rates differ between rows, so this is not an exact match. 8192 at 0.23 (30 node alarms per node-day) gives node Pd
+0.81 and gateway Pd 0.35, against 0.68 and 0.19 for 1024 at 0.10 (51 per node-day) (folds 1-3, 39 node-hours). The mini and matrice gateway stays at 0. Harmonic-line matching (small-integer ratios backed by two shared harmonics,
+   17 bits per report) changes nothing at the operating point, so it is not adopted. Slower floor rise (0.05 per 32 ms)
+   at 8192 raises gateway Pd from 0.35 to 0.41 and cuts node alarms from 49 to 40 in the tuning bed; gate_harm 2 adds
+   node alarms (92). New draw (folds 4-5, seeds 12012 onward; clip reuse not checked): F2 gateway Pd below 100 m 0.29 against
+   0.10 for the round-2 setting on the same draw; rural false alarms 0 in 223 node-hours for F2 (bound 1.00 per km-day)
+   and 0 in 78 node-hours for the round-2 setting (bound 2.85). Dense stress bed: 2880 per km-day for F2 against 411
+   for round 2. Targets are not met.
 
 1. **Held-out result (folds 4-5, chosen setting, theta 0.10).** Gateway Pd below 100 m is **18%** (36 of 199
    crossings); node-level Pd below 100 m is **62%**. The 95% target is not close. Pd falls with wind for FPV
@@ -571,6 +587,294 @@ without node-to-node and 0.35 s with it; idle mode 2.87 s and 2.45 s.
   rule; whether any detector change can reach the Pd target without the false-alarm cost seen here.
 - Still unproven: the 95% Pd target; the <= 1 per km-day false-alarm target (the best measured bound is 3.7 on pooled
   156 node-hours; 223 node-hours with zero events would be needed); the rural bed as a model of a real site.
+
+## 11. Round 3, 2026-11-05: frame length, neighbour matching, retests, new draw
+
+Scope as set in the round-3 brief. Every number below comes from a log or JSON file written by the runs named here, in
+`/home/ben/.cache/sonicmesh/round3/` (paths in 11.8). The round-2 defaults are unchanged: `Params()` is still 1024 samples,
+hop 512, theta 0.16, and `run.py`'s `CHOSEN` is theta 0.10. The unit tests pass (27, `sim/tests`). The default detector was
+checked against the round-2 detector (`HEAD` version, saved as `detector_round2.py`) on four parameter sets, and all four
+outputs were identical. Earlier runs of these settings, if any, are not compared here; this section reports only the runs
+listed in 11.8.
+
+### 11.1 Frame length (step 1)
+
+**Conversion.** The frame is a parameter (`Params.n_fft`, `Params.hop`). Time constants in `Params` are in baseline hops
+of 512 samples (32 ms), and `to_frames()` converts them to the frame in use. Values read from `to_frames()` in this run:
+
+| Setting | 1024 / 512 | 2048 / 1024 | 4096 / 2048 | 8192 / 4096 |
+|---|---|---|---|---|
+| age_min | 62 | 31 | 16 | 8 |
+| hold_frames | 32 | 16 | 8 | 4 |
+| m_win | 16 | 8 | 4 | 2 |
+| k_on | 6 | 3 | 2 | 1 |
+| impulse_hold | 4 | 2 | 1 | **0** |
+| ref_frames | 31 | 16 | 8 | 4 |
+| start-up frames (init_frames) | 8 | 4 | 3 | 3 |
+| smooth | 0.75 | 0.5625 | 0.316 | 0.100 |
+| floor_up_db (per frame) | 0.10 | 0.20 | 0.40 | 0.80 |
+| floor_down_db (per frame) | 0.50 | 1.00 | 2.00 | 4.00 |
+| gap_frames | 0 | 0 | 0 | 0 |
+| init_env_bins | 0 | 0 | 0 | 0 |
+
+The comb bin widths, the 3 % comb tolerance, the 80 Hz to 4 kHz range and the 0.5 % f0 grid were not re-checked in this run.
+
+**Known defect in the conversion (found after the freeze, not fixed).** The impulse hold is 4 baseline hops (128 ms). At
+8192 samples it converts to 0 frames (0.5 rounds to 0), so the impulse hold is switched off at 8192; the 4096 setting gives
+1 frame. The frozen F2 setting therefore has no impulse hold. It is not changed, because F2 was frozen and scored on the new
+draw, and a fix would be a second look. A one-frame exploration on folds 1-3 is in 11.7.
+
+Checks: the converted settings for 2048 are unit-tested (`test_to_frames_keeps_time_constants_in_seconds`), and so is the
+geometry (`test_geometry_bins_and_track_step_follow_the_frame`). Both pass in this run.
+
+**Layer test (line SNR and comb score by frame).** `bed_layers.py --passes 4`, folds 1-3, 756 node-passes per frame length
+(from the log). Medians within 300 m of the node. `line` is the line-to-floor ratio (dB) at the true harmonics 1-4
+(diagnostic only, not seen by the detector), `comb@bpf` the comb score at the true fundamental (diagnostic).
+
+| Class | Row | 1024: node / comb / comb@bpf / line dB | 2048 | 4096 | 8192 |
+|---|---|---|---|---|---|
+| FPV | prop only | 1.00 / 0.636 / 0.197 / 18.5 | 1.00 / 0.733 / 0.072 / 20.2 | 1.00 / 0.750 / 0.261 / 24.3 | 1.00 / 0.716 / 0.000 / 30.3 |
+| FPV | + pink | 0.89 / 0.272 / 0.000 / 6.6 | 1.00 / 0.347 / 0.000 / 10.0 | 1.00 / 0.406 / 0.041 / 13.8 | 1.00 / 0.432 / 0.000 / 22.1 |
+| Mini | prop only | 0.97 / 0.373 / 0.141 / 12.7 | 1.00 / 0.490 / 0.256 / 18.0 | 1.00 / 0.535 / 0.276 / 23.4 | 1.00 / 0.531 / 0.260 / 29.7 |
+| Mini | + pink | 0.22 / 0.104 / 0.000 / 4.2 | 0.67 / 0.167 / 0.000 / 7.2 | 0.94 / 0.205 / 0.094 / 12.3 | 0.97 / 0.209 / 0.103 / 19.8 |
+| Mini | + pink + events + wind 2 | 0.28 / 0.114 / 0.000 / 4.2 | 0.97 / 0.180 / 0.000 / 6.7 | 1.00 / 0.214 / 0.062 / 12.1 | 1.00 / 0.214 / 0.070 / 21.1 |
+| Matrice | prop only | 1.00 / 0.254 / 0.186 / 7.5 | 1.00 / 0.530 / 0.364 / 19.6 | 1.00 / 0.664 / 0.433 / 23.8 | 1.00 / 0.735 / 0.427 / 32.1 |
+| Matrice | + pink | 0.25 / 0.105 / 0.051 / 3.8 | 1.00 / 0.172 / 0.109 / 8.1 | 1.00 / 0.229 / 0.166 / 13.1 | 1.00 / 0.254 / 0.186 / 22.0 |
+| Matrice | + pink + events + wind 2 | 0.22 / 0.091 / 0.000 / 3.5 | 0.86 / 0.162 / 0.095 / 6.9 | 1.00 / 0.195 / 0.095 / 11.9 | 1.00 / 0.195 / 0.100 / 20.2 |
+
+Reading: under the ASSUMED 40 dB pink bed, mini and matrice node detection recovers with frame length (mini 0.22 to 0.97,
+matrice 0.25 to 1.00 at 8192). The line-to-floor ratio keeps rising with frame length, but the median comb score rises
+only slowly beyond 2048 for mini (0.167 to 0.209), and matrice keeps rising to 8192 (0.172 to 0.254), so the gain is
+mainly for mini between 2048 and 4096. FPV is the
+other way round: its comb score at the true fundamental collapses to zero at 8192 (its 2 % rotor wobble, about 12 Hz rms, is
+probably wider than the comb window and flanks at that bin width; this reason is ASSUMED, not tested), while its node Pd stays 1.00 through the other candidates.
+The layer test takes the max over harmonics 1-4 and does not give a per-harmonic breakdown. Per-harmonic limits were
+not measured.
+
+**Tuning sweep (folds 1-3, 120 crossings seed 2026, rural bed 3 h per node = 39 node-h, bed seed 6000).** Rule: round-2
+(30 s, f0 within 12 % direct or octave). Theta chosen by the round-2 rule: the highest gateway Pd below 100 m with no gateway
+event in the bed.
+
+| Frame | theta | Node Pd < 100 m | Gateway Pd < 100 m | Node alarms per node-day (count) | Gateway events |
+|---|---|---|---|---|---|
+| 1024 / 512 | 0.10 | 0.68 | 0.19 | 51.1 (83) | 0 |
+| 2048 / 1024 | 0.10 | 0.89 | 0.24 | 288.6 (469) | 207 |
+| 2048 / 1024 | 0.23 | 0.66 | 0.22 | 44.3 (72) | 0 |
+| 4096 / 2048 | 0.10 | 0.98 | 0.43 | 288.0 (468) | 249 |
+| 4096 / 2048 | 0.23 | 0.76 | 0.31 | 48.6 (79) | 0 |
+| 8192 / 4096 | 0.10 | 0.97 | 0.26 | 299.1 (486) | 112 |
+| 8192 / 4096 | 0.23 | 0.81 | 0.35 | 30.2 (49) | 0 |
+| 8192 / 4096 | 0.26 | 0.75 | 0.34 | 20.9 (34) | 0 |
+
+Node alarm rates differ between rows, so the comparisons are not exact matches. 8192 at 0.23 (30 node alarms per node-day)
+gives node Pd 0.81 and gateway Pd 0.35. 1024 at 0.10 (51 per node-day) gives 0.68 and 0.19. 1024 at 0.18 (17 per node-day)
+gives 0.56 and 0.10, and 8192 at 0.26 (21 per node-day) gives 0.75 and 0.34. At these rates the 8192 frame gives higher node
+and gateway Pd. The 2048 and 4096 rows at low theta produce gateway events (207 and 249 at theta 0.10) in a bed with no bound
+on them, so they are not usable operating points.
+
+**Per class (same sweep, seed 6000).** Gateway Pd is FPV only at every frame length:
+
+| Frame, theta | FPV node / gateway (n = 37) | Mini node / gateway (n = 25) | Matrice node / gateway (n = 34) |
+|---|---|---|---|
+| 1024, 0.10 | 0.92 / 0.49 | 0.48 / 0.00 | 0.56 / 0.00 |
+| 8192, 0.23 | 1.00 / 0.92 | 0.80 / 0.00 | 0.62 / 0.00 |
+| 8192, 0.26 | 1.00 / 0.89 | 0.72 / 0.00 | 0.50 / 0.00 |
+
+Mini and matrice node detection rises with frame length, but neither reaches a gateway pair at 0 dB source level. The pair
+check at +12 dB (below) gives gateway pairs for both, so the limit at 0 dB is the two-node requirement with this ASSUMED
+level, which 8192 does not remove.
+
+**Cost (computed from `ops_per_frame()` and `state_bytes()`, `cost_estimates.txt`).** Real FFT plus comb and tracker, hop = n/2:
+
+| Frame | Frames per s | MFLOP/s (model) | State RAM (bytes, float32, 8 start-up frames) | Window / hop |
+|---|---|---|---|---|
+| 1024 / 512 | 31.25 | 2.16 | 17,596 | 64 ms / 32 ms |
+| 2048 / 1024 | 15.6 | 1.67 | 32,956 | 128 ms / 64 ms |
+| 4096 / 2048 | 7.8 | 1.46 | 63,676 | 256 ms / 128 ms |
+| 8192 / 4096 | 3.9 | 1.39 | 125,116 | 512 ms / 256 ms |
+
+Compute falls with frame length (fewer frames per second), but state RAM and decision latency rise. The 8192 state is 125 KB by the model's count, against 18 KB at 1024. Whether a given node class in doc 04 can hold it was
+not checked in this run. The 512 ms window centre sits 256 ms after the window start, so each decision is about 0.25 s later
+than at 1024 samples (a latency estimate from the window length, not measured; the protocol is not changed).
+
+**Two frame lengths.** Not run. The layer test shows that FPV and mini/matrice prefer different lengths, but the per-class
+gateway result does not change across lengths (FPV only), so a second length is not justified by these numbers.
+
+### 11.2 Neighbour matching (step 2)
+
+**Design.** Each node reports f0 (11 bits: the existing DETECT line-1 field, 0.2 % steps) and a 6-bit presence mask
+of harmonics 1-6 (a harmonic is present when its window peak stands 2x above its flanks and sits within 4 % of k f0; the
+same test as the harmonicity gate). Rule "lines" (`fa.ratio_lines_ok`): the f0 ratio must lie within 12 % of a
+small-integer ratio rho in {1, 2, 1/2, 3/2, 2/3, 3, 1/3}, and at least 2 harmonics must be shared at that ratio. Harmonic k of
+one node and harmonic m of the other are the same line when k rho = m within 12 %. So a node locked on the second or third
+harmonic still matches, but only on shared lines. A first version (a free Doppler scale over absolute line frequencies) was
+written and replaced before any run: it accepts any small coincidence of harmonic series, so it was not measured.
+
+**Bits.** f0 11 bits + mask 6 bits = 17 bits per report. Against the `DETECT` message in `docs/protocol-v0.md` (not edited; the field sizes below were not re-checked in this run):
+the 8 B payload carries 49 bits today (line 2 delta is 6 of them). Replacing line 2 delta with the mask and adding f0 gives
+60 of 64 bits, so no new message type and no payload growth would be needed. This is a report of what it would need, not
+a spec change.
+
+**Results (folds 1-3, 8192 frame).** Tuning sweep with the lines rule, same crossings and bed as the f0 sweep:
+
+| theta | Gateway Pd, f0 | Events, f0 | Gateway Pd, lines | Events, lines | Node Pd (both) |
+|---|---|---|---|---|---|
+| 0.10 | 0.26 | 112 | 0.41 | 132 | 0.97 |
+| 0.12 | 0.49 | 150 | 0.62 | 152 | 0.98 |
+| 0.14 | 0.46 | 397 | 0.56 | 392 | 0.96 |
+| 0.16 | 0.46 | 142 | 0.50 | 141 | 0.94 |
+| 0.18 | 0.41 | 12 | 0.43 | 13 | 0.92 |
+| 0.20 | 0.38 | 1 | 0.38 | 1 | 0.88 |
+| 0.23 | 0.35 | 0 | 0.35 | 0 | 0.81 |
+| 0.26 | 0.34 | 0 | 0.34 | 0 | 0.75 |
+
+The lines rule adds gateway events at low theta (0.10 to 0.16) and gives nearly the same results from 0.18 up. Gateway
+events in this bed are taken to be random pairs, because each node's scene is independent (ASSUMED; no shifted-null control
+was run).
+
+Pair-level check (`pair_check.py`, folds 1-3, 40 crossings per class, 8192, theta 0.23, crossing seed 6060). Counts as
+printed in `pair_8192.log`:
+
+| Class, source level | Both-detect adjacent pairs | Within 30 s | f0 rule ok | f0 rule ok and within 30 s | Lines rule within window |
+|---|---|---|---|---|---|
+| Mini, 0 dB | 4 | 4 | 1 | 1 | 1 |
+| Mini, +12 dB | 77 | 63 | 54 | 45 | 60 |
+| Matrice, 0 dB | 4 | 4 | 3 | 3 | 3 |
+| Matrice, +12 dB | 65 | 58 | 38 | 34 | 37 |
+
+At 0 dB the two rules give the same counts. At +12 dB the lines rule passes more pairs than the f0 rule (mini 60 against 45,
+matrice 37 against 34). Decision: not adopted. The gateway result at 0.23 is the same for both rules (sweep above), and the
+lines rule adds events at low theta.
+
+### 11.3 Retests on the best frame (step 3)
+
+8192 / 4096, theta 0.23, folds 1-3, 120 crossings (seed 2026), rural bed 3 h per node (39 node-h, seed 7300). Each row is its
+own comb (the floor and gate change the comb), so each is a separate run with its own baseline.
+
+| Variant | Node Pd < 100 m | Gateway Pd < 100 m | Node alarms per node-day (count) | Gateway events |
+|---|---|---|---|---|
+| Baseline (round-2 floor, gate_harm 1) | 0.81 | 0.35 | 30.2 (49) | 0 |
+| Floor rise 0.05 per 32 ms (`floor_up_db` 0.05 per baseline hop) | 0.79 | 0.41 | 24.6 (40) | 0 |
+| gate_harm 2 | 0.89 | 0.39 | 56.6 (92) | 0 |
+| Floor rise 0.05 + gate_harm 2 | 0.85 | 0.41 | 43.1 (70) | 0 |
+
+Keep rule (from round 2): keep a change only if gateway Pd rises without a clear rise in node alarms. The floor-rise change
+passes: gateway +0.06 and node alarms down 19 %. gate_harm 2 fails (node alarms up 1.9 times). The combination fails on
+node alarms (up 1.4 times). The floor rate is per baseline hop and converted by `to_frames`, so 0.05 per 32 ms is the same
+rate (1.6 dB per second) at every frame length.
+
+The slow floor rise is therefore the only retest kept. Carried forward as F2 = 8192 / 4096, theta 0.23, floor rise 0.05
+per 32 ms. The threshold was not re-tuned for F2 (frozen from F1, to avoid another variant).
+
+### 11.4 Finalists on folds 1-3 (step 4)
+
+F0 = round-2 setting (1024 / 512, theta 0.10). F1 = 8192 / 4096, theta 0.23. F2 = F1 with the slow floor rise. Rural 39
+node-h (bed seed 7300) and dense stress bed 6.5 node-h (0.5 h per node, seed 7300). Number of variants tried: see 11.7.
+
+| Finalist | Node Pd | Gateway Pd | Rural node alarms per node-day (count) | Rural gateway events (per km-day) | Dense node alarms per node-day | Dense gateway events (per km-day) |
+|---|---|---|---|---|---|---|
+| F0 | 0.68 | 0.19 | 44.9 (73) | 1 (1.9) | 1,060 (287) | 46 (526) |
+| F1 | 0.81 | 0.35 | 30.2 (49) | 0 (0) | 2,836 (768) | 298 (3,406) |
+| F2 | 0.79 | 0.41 | 24.6 (40) | 0 (0) | 2,773 (751) | 286 (3,269) |
+
+Rural F0 has one event on this bed (the round-2 tuning bed, seed 6000, had none). With 39 node-hours a single event is
+noise at this level. The dense stress bed is a clear result: with the 8192 frame, false alarms in a loud clutter bed rise
+seven times, so the 8192 detector is not robust in dense clutter. F1 and F2 both fail the dense bed by much more
+than F0 does.
+
+### 11.5 New draw, folds 4-5 (step 5)
+
+**What was scored.** Folds 4-5 clips with the `r3` seeds (`SEEDS["r3"]`): crossings 12012, background 12013, rural false
+alarms 12100, dense 12200. Whether these clips were used in earlier rounds was not checked, so treat the 0.29 figure as one
+draw's result, not a held-out confirmation. The settings were fixed before these runs. The checkpoint code and the segment
+refactor of `fa.scene_alarms` were added after the settings were fixed; they do not change results (the resume test gives
+identical JSON). Each r3 run was made once in this round (`logs/r3_*`).
+
+| Setting (same draw) | Crossings below 100 m | Gateway Pd (n) | Node Pd | Node, FPV / mini / matrice | Gateway, FPV / mini / matrice | Rural node-h | Rural node alarms per node-day | Rural gateway events | 95 % bound per km-day | Dense gateway events (per km-day) |
+|---|---|---|---|---|---|---|---|---|---|---|
+| F2 (8192, 0.23, slow floor) | 199 | 0.29 (57) | 0.73 | 1.00 / 0.74 / 0.54 | 0.89 / 0.13 / 0.00 | 223 | 21.5 (200) | 0 | 1.00 | 252 (2,880) |
+| F0 (round 2) | 199 | 0.10 (19) | 0.55 | 0.93 / 0.49 / 0.33 | 0.35 / 0.00 / 0.00 | 78 | 33.5 (109) | 0 | 2.85 | 36 (411) |
+
+The crossing count is per class: FPV 54, mini 69, matrice 76 (below 100 m). F2 rural: 223 node-hours is 17.15 line-hours
+(one line-hour is 13 node-hours). Zero events give a 95 % bound of 2.996 events, which is 0.998 per km-day. F0 rural: 78
+node-hours, same bound method, 2.85.
+
+**The target check.** Gateway Pd below 100 m is 0.29 for F2 against the 95 % target: not met. False alarms: 0 in 17.15
+line-hours gives a bound of 0.998 per km-day, which meets the 1 per km-day target only at the boundary, with the rural ASSUMED
+bed. On the dense stress bed F2 has 2,880 gateway alarms per km-day.
+
+**Diagnosis (exploration on the same draw, not used to change any rule).** The matrice gateway is zero although nodes detect
+it on 54 % of crossings. Of 76 matrice crossings below 100 m, only 4 adjacent node pairs both detect, 3 of them inside 30 s,
+and 1 has matching f0. The 4 pairs show f0 ratios of 5.1, 4.9, 2.1 and 1.16: one node locks on the fifth or second harmonic
+of 100 Hz (501 Hz, 1023 Hz). Ratio 5 is outside the rule's set, and the lines rule (ratios up to 3) does not cover it.
+Mini was not diagnosed. Source: `/home/ben/.cache/sonicmesh/round3/diag_matrice.py`, reading
+the stored onsets of the held-out crossings. Any rule change for this would need a new draw, because this one has been
+used.
+
+### 11.6 Decision and what the rest of the project would need (step 6)
+
+**Not adopted as the default.** F2 meets the rural false-alarm bound at 223 node-hours and raises gateway Pd on folds 1-3
+and on the draw, but its dense stress gateway alarms are seven times the round-2 setting's. Gateway false alarms are
+the criterion, and that is the stress result. So `Params()` and `run.py`'s `CHOSEN` keep the round-2 values. F2 stays the
+rural candidate, with the dense result as an open item. No test was changed. (A default change would need the unit tests that
+use `Params()` at 1024 samples (`test_startup_cap...`, `test_gate_harm...`, `test_harmonic_bits...`) to name `n_fft=1024`.)
+
+**What the web demo and the planned C core would need to match F2:** frame 8192 samples, hop 4096, Hann window, the
+same bin-width conversions (minimum comb half-width 15.6 Hz, flank 47 Hz), time constants converted per hop as in
+`to_frames`, floor rise 0.05 per 32 ms (0.4 dB per 256 ms frame), theta 0.23, and the 6-bit mask if the lines rule were
+adopted. The web demo implements the 1024-sample detector and does not change with this round. Nothing in `web/` was
+changed in round 3 by me. The C core state is 125 KB at 8192 samples by the model's count (section 11.1). Whether a given node class in doc 04 can
+hold it was not checked in this run.
+
+### 11.7 Variants tried, and what was not done
+
+- Tuning sweeps: five, each with nine thetas (45 operating points): frames 1024, 2048, 4096 and 8192 with the f0 rule, and
+  8192 with the lines rule. Each sweep used 120 crossings and 39 node-hours.
+- Retests at 8192, theta 0.23: floor rise 0.05, gate_harm 2, and their combination (three runs beyond the baseline), plus the
+  F2 finalist runs (11.4). One line-overlap rule was written and replaced before any run; it was not measured.
+- Exploration after the freeze, folds 1-3 only (not used for any choice): one-frame impulse hold at 8192 (log
+  `explore_impulse1_8192`): node Pd 0.80, gateway Pd 0.38, 35 node alarms per node-day, 0 gateway events, against 0.79, 0.41,
+  40 and 0 for F2.
+- Not done: a per-harmonic layer test; an 8192 sweep with the floor change (F2 was frozen at theta 0.23); a clean held-out
+  draw (the r3 draw is used in this round); a 223 node-hour rural run for F0 (F0 ran 78 node-hours); a two-frame-length
+  comparison; impulse rejection at longer frames beyond the exploration above.
+- Logs: `/home/ben/.cache/sonicmesh/round3/logs/`, JSON beside them, checkpoints in `ck_*`. Driver: `driver.sh` in the same
+  directory.
+
+### 11.8 Resources, reproduction, tests
+
+- Memory: the parent process peaked at 0.61 to 0.81 GB (`/usr/bin/time -v`). Pool workers were about 0.5 GB resident each
+  (`ps` during the 1024 layer test: six workers summed to 2.9 GB). `fa._limit_memory` sets a 3 GB address space limit per
+  worker. It is called by the false-alarm pool, the layer test's initializer, the crossing pool's initializer (which the trials
+  pool also uses) and the pair check.
+- Wall time (rerun, 6 workers): layer test 1024 19 min, 2048 17 min, 4096 14 min, 8192 13 min; tuning sweep 1024 20 min,
+  2048 11 min, 4096 8 min, 8192 7 min, 8192 lines 6 min; pair check 3 min; trials 6 to 7 min each; F2 223 node-hour rural run 55
+  min (plus dense 0.5 min); F0 78 node-hour run 31 min.
+- Checkpointing (new): `--ckpt DIR` on `run.py` saves each crossing (`map_crossings`) and each 5-minute segment of each node
+  (`fa.scene_alarms`) when it finishes, and a rerun with the same directory skips them. Verified: a resumed tuning run gives
+  identical JSON, and a partial resume recomputes only the missing jobs. Use a separate directory per configuration, because
+  the stored crossing results depend on the frame, threshold and gateway rule. The trials runner (`trials.py`) has no
+  checkpoint; its runs are 3 to 7 min.
+- Tests: `uv run --with pytest --with numpy --with scipy pytest sim/tests`: 27 passed (14.1 s, rerun for this section). The
+  web suite (`npm --prefix web test`) reports 144 passed and 1 skipped for the current `web/` tree, which this section does not
+  change.
+
+**Reproduce (repo commands; `CK` = a checkpoint directory):**
+
+```
+uv run sim/perimeter/bed_layers.py --passes 4 --frames 8192/4096 --rows "prop only|+ pink|+ pink + events + wind 2" --json <path>
+uv run sim/perimeter/run.py --tune --crossings 120 --hours 3 --n-fft 8192 --hop 4096 --ckpt CK --json <path>
+uv run sim/perimeter/run.py --tune --crossings 120 --hours 3 --n-fft 8192 --hop 4096 --gate lines --json <path>
+uv run sim/perimeter/pair_check.py --crossings 40 --n-fft 8192 --hop 4096 --theta 0.23 --json <path>
+uv run sim/perimeter/trials.py --group floor-up05 --n-fft 8192 --theta 0.23 --hours 3 --crossings 120 --json <path>
+uv run sim/perimeter/trials.py --group base --n-fft 1024 --theta 0.10 --bed dense --hours 0.5 --json <path>
+uv run sim/perimeter/run.py --part crossings --seeds r3 --crossings 240 --n-fft 8192 --hop 4096 --theta 0.23 --floor-up 0.05 --ckpt CK --json <path>
+uv run sim/perimeter/run.py --part fa --seeds r3 --hours 17.15 --dense-hours 0.5 --n-fft 8192 --hop 4096 --theta 0.23 --floor-up 0.05 --ckpt CK --json <path>
+uv run sim/perimeter/run.py --part crossings --seeds r3 --crossings 240 --ckpt CK --json <path>   # round-2 setting
+uv run sim/perimeter/run.py --part fa --seeds r3 --hours 6 --dense-hours 0.5 --ckpt CK --json <path>
+```
+
+Round-2 settings: add `--n-fft 1024 --hop 512 --theta 0.10` to the tune and trials commands.
 
 ## Sources
 

@@ -49,7 +49,8 @@ from acoustics.noise import pink, white, wind  # noqa: E402
 from acoustics.scene import padded, render_mic  # noqa: E402
 from acoustics.source import drone_source  # noqa: E402
 from acoustics.turbulence import turbulence  # noqa: E402
-from detector.detector import DF, F0, HOP, LO_BIN, N, NB, Detector, Params, Track  # noqa: E402
+from detector.detector import Detector, Params, Track, geometry  # noqa: E402
+
 
 MASTER_H = 0.25
 MASTER_SEED = 1234
@@ -91,6 +92,9 @@ def build_masters(seconds_h=MASTER_H, ambient_db=AMBIENT_DB):
 
 
 def _init(pink_bed, ev):
+    from fa import _limit_memory  # 3 GB address space per worker
+
+    _limit_memory()
     MASTERS["pink"] = pink_bed
     MASTERS["events"] = ev
 
@@ -104,9 +108,11 @@ def _geometry_list(quick):
 
 
 def one_pass(job):
-    """One node-pass for one row. job = (cls, alt, speed, seed, row name). Returns a dict of the metrics."""
-    cls, alt, spd, seed, row_name = job
+    """One node-pass for one row. job = (cls, alt, speed, seed, row name, n_fft, hop). Returns a dict of the metrics."""
+    cls, alt, spd, seed, row_name, n_fft, hop = job
     row = ROWS[row_name]
+    g = geometry(n_fft, hop)
+    par = Params(theta=THETA, n_fft=n_fft, hop=hop)
     gain = 10 ** (row.get("gain", 0.0) / 20)
     rng_geo = np.random.default_rng(seed * 7919 + 13)
     node = 6 + int(rng_geo.integers(0, 2))
@@ -140,11 +146,11 @@ def one_pass(job):
 
     bpf = CLASS[cls][0]
     k = np.arange(1, 5)
-    true_bins = np.rint(bpf * k / DF).astype(int)  # the class's own harmonics (diagnostic only)
-    true_idx = int(np.argmin(np.abs(F0 - bpf)))
-    det = Detector(Params(theta=THETA))
-    tracks = Track()
-    fr = np.lib.stride_tricks.sliding_window_view(sig, N)[::HOP]
+    true_bins = np.rint(bpf * k / g.DF).astype(int)  # the class's own harmonics (diagnostic only)
+    true_idx = int(np.argmin(np.abs(g.F0 - bpf)))
+    det = Detector(par)
+    tracks = Track(g)
+    fr = np.lib.stride_tricks.sliding_window_view(sig, g.N)[:: g.HOP]
     best_age, n_on, n_fr, S_best, S_src, lines = 0, 0, 0, [], [], []
     node_on = False
     floor_start, floor_close = None, None
@@ -152,11 +158,11 @@ def one_pass(job):
         S, W, ok = det.comb_batch(det.power_frames(fr[c0 : c0 + 512]))
         for j in np.flatnonzero(ok):
             i = c0 + j
-            on = tracks.update(S[j], W[j], det.p)
-            ts = (na + i * HOP + N / 2) / FS
+            on = tracks.update(S[j], W[j], par)
+            ts = (na + i * g.HOP + g.N / 2) / FS
             dd = d3[min(int(ts / TICK_S), len(d3) - 1)]
             if floor_start is None and det.floor is not None:
-                floor_start = det.floor[true_bins[(true_bins > LO_BIN) & (true_bins < NB - 1)]].copy()
+                floor_start = det.floor[true_bins[(true_bins > g.LO_BIN) & (true_bins < g.NB - 1)]].copy()
             if dd < WIN_M:
                 n_fr += 1
                 best_age = max(best_age, tracks.age if tracks.q > 0 else 0)
@@ -165,11 +171,11 @@ def one_pass(job):
                 S_best.append(float(S[j].max()))
                 S_src.append(float(S[j][true_idx]))
                 # line-to-floor ratio: whitened power at the true harmonic bins, relative to the floor (0 dB at floor)
-                bins = true_bins[(true_bins > LO_BIN) & (true_bins < NB - 1)]
+                bins = true_bins[(true_bins > g.LO_BIN) & (true_bins < g.NB - 1)]
                 lines.append(10 * math.log10(max(float(np.max(W[j][bins])), 1e-12)))
                 floor_close = det.floor[bins].copy()
     floor_rise = float(np.mean(floor_close - floor_start)) if (floor_close is not None and floor_start is not None) else 0.0
-    return dict(cls=cls, alt=alt, speed=spd, row=row_name, age=best_age, on=n_on / max(n_fr, 1), node=node_on,
+    return dict(cls=cls, alt=alt, speed=spd, row=row_name, n_fft=n_fft, hop=hop, age=best_age, on=n_on / max(n_fr, 1), node=node_on,
                 comb=float(np.median(S_best)) if S_best else 0.0,
                 comb_src=float(np.median(S_src)) if S_src else 0.0,
                 line_db=float(np.median(lines)) if lines else 0.0,
@@ -185,8 +191,11 @@ def main():
                     help="pink ambient level (ASSUMED 40 dB SPL; sensitivity only)")
     ap.add_argument("--rows", default=None, help="'|'-separated row names to run (default: all)")
     ap.add_argument("--classes", default=None, help="comma-separated classes (default: all)")
+    ap.add_argument("--frames", default="1024/512",
+                    help="'|'-separated n_fft/hop pairs, e.g. 1024/512|2048/1024 (one run per pair)")
     ap.add_argument("--json", default=None)
     args = ap.parse_args()
+    frames = [tuple(int(v) for v in f.split("/")) for f in args.frames.split("|")]
     passes = 2 if args.quick else args.passes
     t0 = time.time()
     pink_bed, ev, n_events = build_masters(ambient_db=args.ambient_db)
@@ -201,33 +210,38 @@ def main():
         CLASSES_RUN = CLASSES
     print(f"masters: {MASTER_H} h, folds {FOLDS}, pink {args.ambient_db} dB SPL, events {n_events} clips, "
           f"{time.time() - t0:.0f} s", flush=True)
-    jobs = []
-    for alt, spd in _geometry_list(args.quick):
-        for cls in (CLASSES_RUN[:1] if args.quick else CLASSES_RUN):
-            for p in range(passes):
-                for row in ROWS:
-                    jobs.append((cls, alt, spd, 5000 + 100 * p + int(alt) + int(spd), row))
     from multiprocessing import Pool
 
-    t1 = time.time()
-    with Pool(args.procs, initializer=_init, initargs=(pink_bed, ev)) as pool:
-        res = pool.map(one_pass, jobs, chunksize=4)
-    print(f"{len(jobs)} node-passes in {time.time() - t1:.0f} s with {args.procs} workers", flush=True)
-    print("class   row                       n   med age  node Pd  on  med comb  med comb@bpf  line dB  floor rise dB")
-    summary = {}
-    for cls in (CLASSES_RUN[:1] if args.quick else CLASSES_RUN):
-        for row in ROWS:
-            r = [x for x in res if x["cls"] == cls and x["row"] == row]
-            s = dict(n=len(r), age_med=float(np.median([x["age"] for x in r])),
-                     node_pd=float(np.mean([x["node"] for x in r])), on=float(np.mean([x["on"] for x in r])),
-                     comb_med=float(np.median([x["comb"] for x in r])),
-                     comb_src_med=float(np.median([x["comb_src"] for x in r])),
-                     line_db_med=float(np.median([x["line_db"] for x in r])),
-                     floor_db_med=float(np.median([x["floor_db"] for x in r])))
-            summary[f"{cls}|{row}"] = s
-            print(f"{cls:8s}{row:26s}{s['n']:4d}{s['age_med']:9.0f}{s['node_pd']:9.2f}{s['on']:5.2f}"
-                  f"{s['comb_med']:10.3f}{s['comb_src_med']:14.3f}{s['line_db_med']:9.1f}{s['floor_db_med']:14.2f}")
-    out = dict(rows=res, summary=summary, passes=passes, geometries=_geometry_list(args.quick),
+    res, summary = [], {}
+    for n_fft, hop in frames:
+        jobs = []
+        for alt, spd in _geometry_list(args.quick):
+            for cls in (CLASSES_RUN[:1] if args.quick else CLASSES_RUN):
+                for p in range(passes):
+                    for row in ROWS:
+                        jobs.append((cls, alt, spd, 5000 + 100 * p + int(alt) + int(spd), row, n_fft, hop))
+        t1 = time.time()
+        with Pool(args.procs, initializer=_init, initargs=(pink_bed, ev)) as pool:
+            res_f = pool.map(one_pass, jobs, chunksize=4)
+        res += res_f
+        print(f"frame {n_fft}/{hop}: {len(jobs)} node-passes in {time.time() - t1:.0f} s with {args.procs} workers",
+              flush=True)
+        print("frame   class   row                       n   med age  node Pd  on  med comb  med comb@bpf  "
+              "line dB  floor rise dB")
+        for cls in (CLASSES_RUN[:1] if args.quick else CLASSES_RUN):
+            for row in ROWS:
+                r = [x for x in res_f if x["cls"] == cls and x["row"] == row]
+                s = dict(n=len(r), age_med=float(np.median([x["age"] for x in r])),
+                         node_pd=float(np.mean([x["node"] for x in r])), on=float(np.mean([x["on"] for x in r])),
+                         comb_med=float(np.median([x["comb"] for x in r])),
+                         comb_src_med=float(np.median([x["comb_src"] for x in r])),
+                         line_db_med=float(np.median([x["line_db"] for x in r])),
+                         floor_db_med=float(np.median([x["floor_db"] for x in r])))
+                summary[f"{n_fft}|{cls}|{row}"] = s
+                print(f"{n_fft:5d}   {cls:8s}{row:26s}{s['n']:4d}{s['age_med']:9.0f}{s['node_pd']:9.2f}{s['on']:5.2f}"
+                      f"{s['comb_med']:10.3f}{s['comb_src_med']:14.3f}{s['line_db_med']:9.1f}{s['floor_db_med']:14.2f}",
+                      flush=True)
+    out = dict(rows=res, summary=summary, passes=passes, frames=frames, geometries=_geometry_list(args.quick),
                seconds=time.time() - t0)
     if args.json:
         Path(args.json).write_text(json.dumps(out, indent=1, default=float))
