@@ -28,6 +28,7 @@ body {
 }
 
 #app {
+  position: relative;
   display: grid;
   grid-template-columns: 1fr 340px;
   grid-template-rows: minmax(0, 1fr) auto auto;
@@ -60,10 +61,16 @@ body {
   display: none;
 }
 
+/* Top right of the pane. It stays in the same place over the map while the pane is closed. */
 #pane-toggle {
-  top: 10px;
-  right: 10px;
-  padding: 6px 8px;
+  position: absolute;
+  top: 8px;
+  right: 20px;
+  z-index: 5;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  line-height: 1;
 }
 
 #inspector {

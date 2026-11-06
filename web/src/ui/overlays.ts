@@ -19,7 +19,7 @@ export function renderIntro(dialog: HTMLDialogElement, onStart: () => void): voi
       SonicMesh is a line of low-cost, $30 microphone nodes that listens for drones crossing a perimeter, and this
       simulation lets you watch one get picked up, hear what each node hears, and fly it yourself.
     </p>
-    <p>The simulated nodes run the actual detection algorithms they would run in the field.</p>
+    <p>The simulated nodes run the ACTUAL detection algorithms they would run in the field.</p>
     <button class="start" autofocus>Close and start</button>
   `;
   dialog.querySelector('.start')?.addEventListener('click', () => {

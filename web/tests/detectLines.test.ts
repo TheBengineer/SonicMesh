@@ -25,16 +25,17 @@ function linesFor(nodes: { id: number; targetIds: number[]; bearingDeg?: number 
 }
 
 describe('detection lines in the 3D view', () => {
-  it('show a pulse, a bogie band and a crossing marker without any Truth line', () => {
+  it('show a pulse, a bogie band, an estimated area and its lines without any Truth line', () => {
     const proto = WorldView.prototype as unknown as Record<string, (...a: unknown[]) => void>;
     const self = { detectGroup: new THREE.Group(), packetPos: proto.packetPos, label: () => new THREE.Sprite() };
     const node = (id: number) => ({ id, detecting: true, pitchHz: 600, targetIds: [5], bearingDeg: null });
-    const bogie = { letter: 'A', pitchHz: 600, nodeIds: [1, 2], fix: { x: 60, y: 80, radiusM: 40 } };
+    const bogie = { letter: 'A', pitchHz: 600, nodeIds: [1, 2], area: { x: 60, y: 200, majorM: 80, minorM: 40, angleRad: 0, nodeIds: [1, 2] } };
     proto.updateDetections.call(self, { terrain }, { ...truthOn, truth: false }, { nodes: [node(1), node(2)], bogies: [bogie] });
     const kids = self.detectGroup.children;
-    // Two discs, one band and a label for the bogie, two discs for the crossing, and a pulse and label per node.
-    expect(kids.filter((k) => k instanceof Line2)).toHaveLength(1);
-    expect(kids.filter((k) => k instanceof THREE.Sprite)).toHaveLength(3);
+    // Two discs, one band and a label for the bogie, two discs, a line per node and a label for the area, and a pulse and
+    // label per node.
+    expect(kids.filter((k) => k instanceof Line2)).toHaveLength(3);
+    expect(kids.filter((k) => k instanceof THREE.Sprite)).toHaveLength(4);
     expect(kids.filter((k) => k instanceof THREE.Mesh && !(k instanceof Line2))).toHaveLength(6);
     expect((kids.find((k) => k instanceof Line2) as Line2).material.dashed).toBe(false);
   });

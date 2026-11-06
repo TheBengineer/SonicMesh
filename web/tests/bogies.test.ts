@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { BogieTracker, crossing, groupReports, samePitch, type BogieReport } from '../src/lora/bogies';
+import { BogieTracker, groupReports, samePitch, type BogieReport } from '../src/lora/bogies';
+import { areaEdge, type BogieArea } from '../src/lora/locate';
 
-const report = (id: number, x: number, pitchHz: number, bearingDeg: number | null = null): BogieReport => ({ id, x, y: 0, pitchHz, bearingDeg, bearingSigmaDeg: bearingDeg === null ? null : 5 });
+const report = (id: number, x: number, pitchHz: number, bearingDeg: number | null = null, peak = 0.2): BogieReport => ({ id, x, y: 0, pitchHz, bearingDeg, peak });
 
 describe('pitch matching', () => {
   it('takes equal pitches and low multiples, with room for Doppler', () => {
@@ -30,29 +31,58 @@ describe('grouping', () => {
   });
 });
 
-describe('bearing crossing', () => {
-  it('finds the point two arrows meet', () => {
-    const f = crossing(report(1, -100, 600, 45), report(2, 100, 600, 315))!;
-    expect(f.x).toBeCloseTo(0, 6);
-    expect(f.y).toBeCloseTo(100, 6);
+describe('estimated area', () => {
+  // Scores for a source at (x, y): strength / distance, with the height the fit assumes.
+  const heard = (nodes: [number, number, number, (number | null)?][], x: number, y: number, strength = 40): BogieReport[] =>
+    nodes.map(([id, nx, ny, bearing]) => ({ id, x: nx, y: ny, pitchHz: 600, bearingDeg: bearing ?? null, peak: strength / Math.hypot(nx - x, ny - y, 50) }));
+  const settle = (reports: BogieReport[]) => {
+    const t = new BogieTracker();
+    let last = t.update(0, reports);
+    for (let i = 1; i <= 12; i++) last = t.update(i * 0.25, reports);
+    return last[0].area!;
+  };
+  const staggered: [number, number, number][] = [
+    [1, -240, 30],
+    [2, -120, -30],
+    [3, 0, 30],
+    [4, 120, -30],
+    [5, 240, 30],
+  ];
+
+  it('places a source from single mics alone, without being told its strength', () => {
+    for (const strength of [25, 40, 70]) {
+      const a = settle(heard(staggered, 60, 90, strength));
+      expect(Math.hypot(a.x - 60, a.y - 90), `strength ${strength}`).toBeLessThan(50);
+    }
   });
 
-  it('gives a wider marker for a shallow crossing', () => {
-    const steep = crossing(report(1, -100, 600, 45), report(2, 100, 600, 315))!;
-    const shallow = crossing(report(1, -100, 600, 10), report(2, 100, 600, 350))!;
-    expect(shallow.radiusM).toBeGreaterThan(steep.radiusM);
+  it('draws a wider area across the line when nodes sit in a straight line, as they cannot tell its sides apart', () => {
+    const straight = staggered.map(([id, x]): [number, number, number] => [id, x, 0]);
+    const a = settle(heard(straight, 60, 90));
+    expect(Math.abs(a.y)).toBeLessThan(40);
+    expect(a.minorM + a.majorM).toBeGreaterThan(settle(heard(staggered, 60, 90)).minorM + settle(heard(staggered, 60, 90)).majorM);
   });
 
-  it('gives a wider marker for less certain bearings', () => {
-    const sure = crossing(report(1, -100, 600, 45), report(2, 100, 600, 315))!;
-    const unsure = crossing({ ...report(1, -100, 600, 45), bearingSigmaDeg: 14 }, report(2, 100, 600, 315))!;
-    expect(unsure.radiusM).toBeGreaterThan(sure.radiusM);
+  it('settles the side from an array bearing', () => {
+    const straight = staggered.map(([id, x]): [number, number, number, number | null] => [id, x, 0, id === 3 ? (Math.atan2(60, 90) * 180) / Math.PI : null]);
+    const a = settle(heard(straight, 60, 90));
+    expect(a.y).toBeGreaterThan(40);
   });
 
-  it('gives none for arrows that diverge, run parallel, or lack a bearing', () => {
-    expect(crossing(report(1, -100, 600, 315), report(2, 100, 600, 45))).toBeNull();
-    expect(crossing(report(1, -100, 600, 10), report(2, 100, 600, 10))).toBeNull();
-    expect(crossing(report(1, -100, 600), report(2, 100, 600, 315))).toBeNull();
+  it('gives no area for one faint node, and lines only from nodes that count', () => {
+    const t = new BogieTracker();
+    expect(t.update(0, [report(1, 0, 600, null, 0.2)])[0].area).toBeNull();
+    expect(t.update(1, [report(1, 0, 600, null, 0.07), report(2, 120, 600, null, 0.07)])[0].area).toBeNull();
+    const a = t.update(2, [report(1, 0, 600, null, 0.3), report(2, 120, 600, null, 0.3), report(3, 240, 600, null, 0.07)])[0].area!;
+    expect(a.nodeIds).toEqual([1, 2]);
+  });
+
+  it('ends a line on the edge of the area, and draws none from inside it', () => {
+    const area: BogieArea = { x: 0, y: 0, majorM: 100, minorM: 50, angleRad: Math.PI / 2, nodeIds: [] };
+    expect(areaEdge(area, 0, 300)).toEqual({ x: 0, y: 100 });
+    const side = areaEdge(area, 200, 0)!;
+    expect(side.x).toBeCloseTo(50, 6);
+    expect(areaEdge(area, 10, 10)).toBeNull();
   });
 });
 
@@ -86,12 +116,5 @@ describe('bogie letters', () => {
   it('names a pitch a node actually reported, even with a sub-harmonic in the group', () => {
     const t = new BogieTracker();
     expect(t.update(0, [report(1, 0, 558), report(2, 120, 157)])[0].pitchHz).toBe(558);
-  });
-
-  it('reports a crossing only with two arrays in the group', () => {
-    const t = new BogieTracker();
-    expect(t.update(0, [report(1, -100, 600, 45), report(2, 100, 600)])[0].fix).toBeNull();
-    const fix = t.update(1, [report(1, -100, 600, 45), report(2, 100, 600, 315)])[0].fix!;
-    expect(fix.y).toBeCloseTo(100, 6);
   });
 });

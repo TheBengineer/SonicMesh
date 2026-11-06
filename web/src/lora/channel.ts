@@ -52,6 +52,7 @@ export interface Vec3 {
 
 export interface TerrainLike {
   height(x: number, y: number): number;
+  size?: readonly [number, number];
 }
 
 export function airtime(sf: number, bw: number, nBytes: number): number {

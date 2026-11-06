@@ -80,6 +80,31 @@ export class Terrain {
   }
 }
 
+// Visual only. The sun comes from the south-west, low enough to pick out small slopes. Shade is 1 on flat ground, and
+// slopes are steepened so that gentle hills still read.
+const SUN = (() => {
+  const [x, y, z] = [-0.6, -0.4, 0.55];
+  const len = Math.hypot(x, y, z);
+  return { x: x / len, y: y / len, z: z / len };
+})();
+const SHADE_STEP_M = 8;
+const SHADE_STEEPEN = 2;
+
+export function hillshade(t: Terrain, x: number, y: number): number {
+  const dx = (t.height(x + SHADE_STEP_M, y) - t.height(x - SHADE_STEP_M, y)) / (2 * SHADE_STEP_M);
+  const dy = (t.height(x, y + SHADE_STEP_M) - t.height(x, y - SHADE_STEP_M)) / (2 * SHADE_STEP_M);
+  const [nx, ny] = [-dx * SHADE_STEEPEN, -dy * SHADE_STEEPEN];
+  const lit = (nx * SUN.x + ny * SUN.y + SUN.z) / Math.hypot(nx, ny, 1);
+  return clamp(lit / SUN.z, 0.35, 1.5);
+}
+
+// Visual only. Ground colour from red, green and blue in 0 to 1: paler with height, and shaded.
+export function groundColor(t: Terrain, x: number, y: number): [number, number, number] {
+  const f = t.amplitude > 0 ? t.height(x, y) / t.amplitude : 0;
+  const shade = hillshade(t, x, y);
+  return [(0.2 + 0.3 * f) * shade, (0.34 + 0.24 * f) * shade, (0.17 + 0.14 * f) * shade];
+}
+
 // Visual only. Trees come from the seed, not from the sim state.
 export function placeTrees(t: Terrain): Tree[] {
   const rng = createRng(t.seed ^ 0x9e3779b9);

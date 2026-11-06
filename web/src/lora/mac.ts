@@ -192,7 +192,7 @@ export class LoRaNetwork {
   private gatewayPos: Vec2;
   private readonly ambientDb: number;
   private nodes: NetNode[] = [];
-  private readonly bogieTracker = new BogieTracker();
+  private readonly bogieTracker: BogieTracker;
   private bogies: Bogie[] = [];
   private truth: TruthTarget[] = [];
   private mode: 'idle' | 'event' = 'idle';
@@ -218,6 +218,7 @@ export class LoRaNetwork {
   constructor(opts: NetworkOptions) {
     this.seed = opts.seed >>> 0;
     this.terrain = opts.terrain;
+    this.bogieTracker = new BogieTracker(opts.terrain.size);
     this.gatewayPos = { ...opts.gateway };
     this.ambientDb = opts.ambientDb ?? 40;
     this.rng = createRng((this.seed ^ 0x5f356495) >>> 0);
@@ -407,7 +408,7 @@ export class LoRaNetwork {
   private updateBogies(tS: number): void {
     const reports = this.nodes
       .filter((n) => n.stub.detecting && n.stub.pitchHz > 0)
-      .map((n) => ({ id: n.spec.id, x: n.spec.x, y: n.spec.y, pitchHz: n.stub.pitchHz, bearingDeg: n.stub.bearingDeg, bearingSigmaDeg: n.stub.bearingSigmaDeg }));
+      .map((n) => ({ id: n.spec.id, x: n.spec.x, y: n.spec.y, pitchHz: n.stub.pitchHz, bearingDeg: n.stub.bearingDeg, peak: n.stub.peak }));
     this.bogies = this.bogieTracker.update(tS, reports);
   }
 

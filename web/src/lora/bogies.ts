@@ -1,3 +1,5 @@
+import { AreaGrid, isLocatable, type BogieArea } from './locate';
+
 // Groups detections the way a gateway could, from what nodes report: position, pitch and bearing. No drone identity goes
 // in, so a bogie is only "neighbouring nodes hear a matching pitch". One drone can still split into two bogies, and two
 // drones with related pitches can merge into one.
@@ -8,11 +10,8 @@ export const LINK_M = 360;
 const RATIOS = [1, 2, 3, 4];
 // A bogie that drops out keeps its letter this long, so a short gap does not rename it.
 const LETTER_HOLD_S = 3;
-const MIN_CROSS_DEG = 15;
-const MAX_FIX_M = 800;
-const MIN_FIX_RADIUS_M = 25;
-const MAX_FIX_RADIUS_M = 250;
-const FIX_SMOOTH = 0.3;
+// Comb scores swing from frame to frame, so a node's score is its median over this long.
+const SCORE_WINDOW_S = 1.25;
 
 export interface BogieReport {
   id: number;
@@ -20,13 +19,8 @@ export interface BogieReport {
   y: number;
   pitchHz: number;
   bearingDeg: number | null;
-  bearingSigmaDeg: number | null;
-}
-
-export interface BogieFix {
-  x: number;
-  y: number;
-  radiusM: number;
+  // The comb score, which falls with distance from this source.
+  peak: number;
 }
 
 export interface Bogie {
@@ -34,7 +28,7 @@ export interface Bogie {
   pitchHz: number;
   // In order along the line.
   nodeIds: number[];
-  fix: BogieFix | null;
+  area: BogieArea | null;
 }
 
 // Whether two pitches could be one source: equal, or one a low multiple of the other, since the detector can settle on
@@ -62,37 +56,6 @@ export function groupReports(reports: BogieReport[]): BogieReport[][] {
   return [...groups.values()];
 }
 
-// Where two bearings cross, and how far off that could be for their reported spread and crossing angle. Null when they diverge,
-// are nearly parallel, or cross too far out to mean anything.
-export function crossing(a: BogieReport, b: BogieReport): BogieFix | null {
-  if (a.bearingDeg === null || b.bearingDeg === null) return null;
-  const [ra, rb] = [(a.bearingDeg * Math.PI) / 180, (b.bearingDeg * Math.PI) / 180];
-  const [ax, ay, bx, by] = [Math.sin(ra), Math.cos(ra), Math.sin(rb), Math.cos(rb)];
-  const cross = ax * by - ay * bx;
-  if (Math.abs(cross) < Math.sin((MIN_CROSS_DEG * Math.PI) / 180)) return null;
-  const [dx, dy] = [b.x - a.x, b.y - a.y];
-  const s = (dx * by - dy * bx) / cross;
-  const t = (dx * ay - dy * ax) / cross;
-  if (s <= 0 || t <= 0 || Math.max(s, t) > MAX_FIX_M) return null;
-  const off = (range: number, sigma: number | null): number => range * Math.tan(((sigma ?? 0) * Math.PI) / 180);
-  const spread = Math.max(off(s, a.bearingSigmaDeg), off(t, b.bearingSigmaDeg)) / Math.abs(cross);
-  return { x: a.x + s * ax, y: a.y + s * ay, radiusM: Math.min(MAX_FIX_RADIUS_M, Math.max(MIN_FIX_RADIUS_M, spread)) };
-}
-
-// The mean crossing over every pair of arrays in a group.
-function fixOf(group: BogieReport[]): BogieFix | null {
-  const fixes: BogieFix[] = [];
-  group.forEach((a, i) => {
-    for (const b of group.slice(i + 1)) {
-      const f = crossing(a, b);
-      if (f) fixes.push(f);
-    }
-  });
-  if (fixes.length === 0) return null;
-  const mean = (get: (f: BogieFix) => number): number => fixes.reduce((sum, f) => sum + get(f), 0) / fixes.length;
-  return { x: mean((f) => f.x), y: mean((f) => f.y), radiusM: mean((f) => f.radiusM) };
-}
-
 // The upper middle value, always a pitch a node reported. A mean of 558 Hz and its 157 Hz sub-harmonic would name a pitch
 // nobody heard.
 function medianOf(values: number[]): number {
@@ -107,39 +70,57 @@ interface Known {
   letter: string;
   pitchHz: number;
   reports: BogieReport[];
-  fix: BogieFix | null;
+  map: Float64Array | null;
   lastS: number;
 }
 
 // Keeps a bogie's letter while its nodes change as it moves along the line.
 export class BogieTracker {
   private known: Known[] = [];
+  private readonly scores = new Map<number, { t: number; peak: number }[]>();
+  private readonly grid: AreaGrid;
+
+  constructor(size: readonly [number, number] = [2000, 1400]) {
+    this.grid = new AreaGrid(size);
+  }
+
+  // Each report with its node's median score over the last moments.
+  private smoothed(t: number, reports: BogieReport[]): Map<number, number> {
+    const out = new Map<number, number>();
+    for (const r of reports) {
+      const log = (this.scores.get(r.id) ?? []).filter((s) => t - s.t < SCORE_WINDOW_S);
+      log.push({ t, peak: r.peak });
+      this.scores.set(r.id, log);
+      out.set(r.id, medianOf(log.map((s) => s.peak)));
+    }
+    return out;
+  }
 
   update(t: number, reports: BogieReport[]): Bogie[] {
     this.known = this.known.filter((k) => t - k.lastS <= LETTER_HOLD_S);
+    const scores = this.smoothed(t, reports);
     const groups = groupReports(reports).sort((a, b) => b.length - a.length);
     const claimed = new Set<Known>();
     const out: Bogie[] = [];
     for (const group of groups) {
       const pitchHz = medianOf(group.map((r) => r.pitchHz));
       const known = this.bestMatch(group, pitchHz, claimed);
-      const entry: Known = known ?? { letter: this.freshLetter(), pitchHz, reports: group, fix: null, lastS: t };
+      const entry: Known = known ?? { letter: this.freshLetter(), pitchHz, reports: group, map: null, lastS: t };
       if (known) claimed.add(known);
       else {
         this.known.push(entry);
         claimed.add(entry);
       }
-      const fix = fixOf(group);
-      if (fix && entry.fix) {
-        fix.x = entry.fix.x + FIX_SMOOTH * (fix.x - entry.fix.x);
-        fix.y = entry.fix.y + FIX_SMOOTH * (fix.y - entry.fix.y);
-        fix.radiusM = entry.fix.radiusM + FIX_SMOOTH * (fix.radiusM - entry.fix.radiusM);
+      const located = group.map((r) => ({ id: r.id, x: r.x, y: r.y, score: scores.get(r.id) ?? 0, bearingDeg: r.bearingDeg }));
+      let area: BogieArea | null = null;
+      if (isLocatable(located)) {
+        entry.map = this.grid.update(entry.map, located);
+        area = this.grid.area(entry.map, located);
       }
       entry.pitchHz = pitchHz;
       entry.reports = group;
-      entry.fix = fix;
       entry.lastS = t;
-      out.push({ letter: entry.letter, pitchHz, nodeIds: alongLine(group), fix });
+      out.push({ letter: entry.letter, pitchHz, nodeIds: alongLine(group), area });
     }
     return out.sort((a, b) => a.letter.localeCompare(b.letter));
   }

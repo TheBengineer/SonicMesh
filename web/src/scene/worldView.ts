@@ -3,10 +3,11 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { Line2 } from 'three/examples/jsm/lines/Line2.js';
 import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry.js';
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
+import { areaEdge, type BogieArea } from '../lora/locate';
 import type { LoraView } from '../lora/types';
 import type { Selection } from '../selection';
 import type { NodeKind } from '../sim/scenario';
-import { placeTrees, type Terrain } from '../sim/terrain';
+import { groundColor, placeTrees, type Terrain } from '../sim/terrain';
 import { DRONE_CLASSES, type World, type WorldState } from '../sim/world';
 import type { DroneClass } from '../sim/scenario';
 import type { Point, ScreenPos } from '../ui/popup';
@@ -44,6 +45,9 @@ const BOGIE_LINE_PX = 18;
 const NODE_RING_M = 39;
 const LABEL_WIDTH_M = 240;
 const PITCH_LABEL_PX = 70;
+const AREA_LINE_PX = 3;
+// Ground marks draw after the terrain with no depth test, so hills never cut through them.
+const OVER_TERRAIN = 3;
 const BEARING_ARROW = 0xffffff;
 const BEARING_ARROW_M = 90;
 const BEARING_ARROW_PX = 44;
@@ -82,6 +86,8 @@ export interface Hit {
 const PICK_PX = 16;
 // Blank margin around the terrain in the 2D map, in pixels.
 const MAP_MARGIN_PX = 16;
+const MAP_GROUND_CELLS = 400;
+const MAP_GROUND_LEVEL = 0.55;
 // Lift of the anchor above the ground, so the window points at the mast or body rather than its foot.
 const ANCHOR_LIFT_M = { node: 3, gateway: 4, packet: 4 } as const;
 
@@ -92,10 +98,13 @@ export function toScene(x: number, y: number, h: number): THREE.Vector3 {
   return new THREE.Vector3(x, h, -y);
 }
 
+// Fine enough to follow the terrain's smallest bumps, and the road along them.
+const TERRAIN_CELLS_X = 200;
+
 function buildTerrain(t: Terrain): THREE.Mesh {
   const [w, h] = t.size;
-  const nx = 100;
-  const ny = 40;
+  const nx = TERRAIN_CELLS_X;
+  const ny = Math.round((nx * h) / w);
   const pos = new Float32Array((nx + 1) * (ny + 1) * 3);
   const col = new Float32Array((nx + 1) * (ny + 1) * 3);
   for (let j = 0; j <= ny; j++) {
@@ -107,10 +116,7 @@ function buildTerrain(t: Terrain): THREE.Mesh {
       pos[k] = x;
       pos[k + 1] = ground;
       pos[k + 2] = -y;
-      const f = t.amplitude > 0 ? ground / t.amplitude : 0;
-      col[k] = 0.24 + 0.18 * f;
-      col[k + 1] = 0.38 + 0.12 * f;
-      col[k + 2] = 0.2 + 0.08 * f;
+      col.set(groundColor(t, x, y), k);
     }
   }
   const idx: number[] = [];
@@ -134,7 +140,7 @@ function buildTerrain(t: Terrain): THREE.Mesh {
 // Visual only. The road sits 0.6 m above the terrain.
 function buildRoad(t: Terrain): THREE.Mesh {
   const [w] = t.size;
-  const nx = 100;
+  const nx = TERRAIN_CELLS_X;
   const half = 4;
   const pos = new Float32Array((nx + 1) * 2 * 3);
   for (let i = 0; i <= nx; i++) {
@@ -474,16 +480,17 @@ export class WorldView {
   }
 
   // What nodes report: a pulse and pitch on each detecting node, an array's bearing arrow, a band over each bogie, and a
-  // soft marker where a bogie's arrows cross. Only the Truth view links a node to a drone.
+  // soft area where a bogie is estimated to be, with lines from the nodes that place it. Only the Truth view links a node to a drone.
   private updateDetections(world: World, state: WorldState, lora: LoraView | null, nowS = 0): void {
     disposeGroup(this.detectGroup);
     this.detectGroup.clear();
     if (!lora) return;
     const groundAt = (x: number, y: number, lift: number): THREE.Vector3 => toScene(x, y, world.terrain.height(x, y) + lift);
     const flat = (geo: THREE.BufferGeometry, color: number, opacity: number, at: THREE.Vector3): THREE.Mesh => {
-      const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color, transparent: true, opacity, side: THREE.DoubleSide, depthWrite: false }));
+      const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color, transparent: true, opacity, side: THREE.DoubleSide, depthWrite: false, depthTest: false }));
       mesh.rotation.x = -Math.PI / 2;
       mesh.position.copy(at);
+      mesh.renderOrder = OVER_TERRAIN;
       mesh.raycast = () => {};
       return mesh;
     };
@@ -503,10 +510,27 @@ export class WorldView {
       }
       const mid = members[members.length >> 1];
       this.detectGroup.add(this.label(bogieLabel(b), color, groundAt(mid.x, mid.y, 130), 1.4));
-      if (b.fix) {
-        const at = groundAt(b.fix.x, b.fix.y, 2);
-        this.detectGroup.add(flat(new THREE.CircleGeometry(b.fix.radiusM, 40), color, 0.22, at));
-        this.detectGroup.add(flat(new THREE.CircleGeometry(b.fix.radiusM * 0.5, 40), color, 0.22, at));
+      if (b.area) {
+        const at = groundAt(b.area.x, b.area.y, 2);
+        for (const k of [1, 0.5]) {
+          const disc = flat(new THREE.CircleGeometry(1, 48), color, 0.22, at);
+          disc.scale.set(b.area.majorM * k, b.area.minorM * k, 1);
+          disc.rotation.z = b.area.angleRad;
+          this.detectGroup.add(disc);
+        }
+        for (const id of b.area.nodeIds) {
+          const n = members.find((o) => o.id === id);
+          const edge = n && areaEdge(b.area, n.x, n.y);
+          if (!n || !edge) continue;
+          const [from, to] = [groundAt(n.x, n.y, 4), groundAt(edge.x, edge.y, 3)];
+          const line = new Line2(
+            new LineGeometry().setPositions([from.x, from.y, from.z, to.x, to.y, to.z]),
+            new LineMaterial({ color, linewidth: AREA_LINE_PX, transparent: true, opacity: 0.8, depthTest: false }),
+          );
+          line.renderOrder = OVER_TERRAIN;
+          this.detectGroup.add(line);
+        }
+        this.detectGroup.add(this.label(`${b.letter} estimated`, color, groundAt(b.area.x, b.area.y, 40), 0.8));
       }
     }
 
@@ -576,9 +600,10 @@ export class WorldView {
       if (!ring) {
         ring = new THREE.Mesh(
           new THREE.RingGeometry(10, 13, 40),
-          new THREE.MeshBasicMaterial({ side: THREE.DoubleSide, transparent: true }),
+          new THREE.MeshBasicMaterial({ side: THREE.DoubleSide, transparent: true, depthWrite: false, depthTest: false }),
         );
         ring.rotation.x = -Math.PI / 2;
+        ring.renderOrder = OVER_TERRAIN;
         ring.raycast = () => {};
         this.ringGroup.add(ring);
         this.rings.set(key, ring);
@@ -655,19 +680,70 @@ export class WorldView {
   }
 
   private lastMap = { w: 1, h: 1 };
+  private mapGround: { terrain: Terrain; canvas: HTMLCanvasElement } | null = null;
 
   // Sim metres to map pixels, and back. The map fits the terrain with a margin, north up.
   private mapTransform(terrain: Terrain): { scale: number; sx(x: number): number; sy(y: number): number; inv(p: Point): Point } {
     const { w, h } = this.lastMap;
     const [sw, sh] = terrain.size;
     const m = MAP_MARGIN_PX;
-    const scale = Math.min((w - 2 * m) / sw, (h - 2 * m) / sh);
+    // A panel squeezed smaller than its margins must not flip the map.
+    const scale = Math.max(1e-3, Math.min((w - 2 * m) / sw, (h - 2 * m) / sh));
     return {
       scale,
       sx: (x: number): number => m + (x + sw / 2) * scale,
       sy: (y: number): number => m + (sh / 2 - y) * scale,
       inv: (p: Point): Point => ({ x: (p.x - m) / scale - sw / 2, y: sh / 2 - (p.y - m) / scale }),
     };
+  }
+
+  // The ground for the 2D map, kept dark so that the markers stand out. Drawn once per terrain.
+  private shadedMap(t: Terrain): HTMLCanvasElement {
+    if (this.mapGround?.terrain === t) return this.mapGround.canvas;
+    const [w, h] = t.size;
+    const canvas = document.createElement('canvas');
+    canvas.width = MAP_GROUND_CELLS;
+    canvas.height = Math.round((MAP_GROUND_CELLS * h) / w);
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      const image = ctx.createImageData(canvas.width, canvas.height);
+      for (let j = 0; j < canvas.height; j++) {
+        for (let i = 0; i < canvas.width; i++) {
+          const x = -w / 2 + ((i + 0.5) * w) / canvas.width;
+          const y = h / 2 - ((j + 0.5) * h) / canvas.height;
+          const k = (j * canvas.width + i) * 4;
+          image.data.set(groundColor(t, x, y).map((c) => c * MAP_GROUND_LEVEL * 255), k);
+          image.data[k + 3] = 255;
+        }
+      }
+      ctx.putImageData(image, 0, 0);
+    }
+    this.mapGround = { terrain: t, canvas };
+    return canvas;
+  }
+
+  // A bogie's estimated area, with a line from each node that places it to the area's edge.
+  private drawArea2d(ctx: CanvasRenderingContext2D, area: BogieArea, color: string, members: { id: number; x: number; y: number }[], sx: (x: number) => number, sy: (y: number) => number, scale: number): void {
+    ctx.strokeStyle = color;
+    ctx.fillStyle = color;
+    ctx.lineWidth = 2;
+    ctx.globalAlpha = 0.8;
+    for (const id of area.nodeIds) {
+      const n = members.find((o) => o.id === id);
+      const edge = n && areaEdge(area, n.x, n.y);
+      if (!n || !edge) continue;
+      ctx.beginPath();
+      ctx.moveTo(sx(n.x), sy(n.y));
+      ctx.lineTo(sx(edge.x), sy(edge.y));
+      ctx.stroke();
+    }
+    ctx.beginPath();
+    // The canvas y axis runs down, so its angles run the other way.
+    ctx.ellipse(sx(area.x), sy(area.y), area.majorM * scale, area.minorM * scale, -area.angleRad, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.globalAlpha = 0.25;
+    ctx.fill();
+    ctx.globalAlpha = 1;
   }
 
   private draw2d(world: World, state: WorldState, selection: Selection, lora: LoraView | null, nowS: number): void {
@@ -680,8 +756,7 @@ export class WorldView {
     const { sx, sy, scale } = this.mapTransform(terrain);
     const m = MAP_MARGIN_PX;
     ctx.clearRect(0, 0, w, h);
-    ctx.fillStyle = '#16221a';
-    ctx.fillRect(sx(-sw / 2), sy(sh / 2), sw * scale, sh * scale);
+    ctx.drawImage(this.shadedMap(terrain), sx(-sw / 2), sy(sh / 2), sw * scale, sh * scale);
     ctx.strokeStyle = '#3b3f44';
     ctx.lineWidth = 3;
     ctx.beginPath();
@@ -709,7 +784,7 @@ export class WorldView {
       }
       ctx.globalAlpha = 1;
 
-      // Bogies go under the markers: a band over their nodes, and a soft patch where their arrows cross.
+      // Bogies go under the markers: a band over their nodes, and a soft area where they are estimated to be.
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
       for (const b of lora.bogies) {
@@ -724,16 +799,7 @@ export class WorldView {
         for (const o of members.length > 1 ? members.slice(1) : members) ctx.lineTo(sx(o.x) + (members.length > 1 ? 0 : 0.01), sy(o.y));
         ctx.stroke();
         ctx.globalAlpha = 1;
-        if (b.fix) {
-          const [fx, fy, fr] = [sx(b.fix.x), sy(b.fix.y), Math.max(16, b.fix.radiusM * scale)];
-          const glow = ctx.createRadialGradient(fx, fy, 0, fx, fy, fr);
-          glow.addColorStop(0, `${css(bogieColor(b.letter))}99`);
-          glow.addColorStop(1, `${css(bogieColor(b.letter))}00`);
-          ctx.fillStyle = glow;
-          ctx.beginPath();
-          ctx.arc(fx, fy, fr, 0, Math.PI * 2);
-          ctx.fill();
-        }
+        if (b.area) this.drawArea2d(ctx, b.area, css(bogieColor(b.letter)), members, sx, sy, scale);
       }
       ctx.lineCap = 'butt';
       ctx.lineJoin = 'miter';
@@ -835,6 +901,7 @@ export class WorldView {
       if (members.length === 0) return;
       const mid = members[members.length >> 1];
       text(bogieLabel(b), sx(mid.x), sy(mid.y) + 10 * ICON_SCALE + 72 + i * 26, css(bogieColor(b.letter)), 22);
+      if (b.area) text(`${b.letter} estimated`, sx(b.area.x), sy(b.area.y), css(bogieColor(b.letter)), 18);
     });
     ctx.textAlign = 'start';
 

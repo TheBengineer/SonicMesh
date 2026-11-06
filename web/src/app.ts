@@ -745,8 +745,12 @@ export function startApp(root: HTMLElement): void {
   waterfallToggle.addEventListener('click', () => setWaterfalls(!wfOpen));
   const paneToggle = need<HTMLButtonElement>(root, '#pane-toggle');
   paneToggle.addEventListener('click', () => {
-    const open = root.classList.toggle('pane-closed');
-    paneToggle.setAttribute('aria-expanded', String(!open));
+    const closed = root.classList.toggle('pane-closed');
+    paneToggle.setAttribute('aria-expanded', String(!closed));
+    const label = closed ? 'Expand the object list' : 'Collapse the object list';
+    paneToggle.textContent = closed ? '◂' : '▸';
+    paneToggle.title = label;
+    paneToggle.setAttribute('aria-label', label);
   });
   setViewMode('orbit');
   setWaterfalls(true);

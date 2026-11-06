@@ -5,25 +5,25 @@
   "seed": 20261104,
   "terrain": {
     "size_m": [2000, 1400],
-    "amplitude_m": 7,
-    "wavelength_m": 300,
-    "road_y_m": 30
+    "amplitude_m": 40,
+    "wavelength_m": 220,
+    "road_y_m": 90
   },
   "gateway": { "x": 0, "y": -90 },
   "nodes": [
-    { "id": 1, "kind": "detector", "x": -720, "y": 0 },
-    { "id": 2, "kind": "detector", "x": -600, "y": 0 },
-    { "id": 3, "kind": "array", "x": -480, "y": 0 },
-    { "id": 4, "kind": "detector", "x": -360, "y": 0 },
-    { "id": 5, "kind": "detector", "x": -240, "y": 0 },
-    { "id": 6, "kind": "array", "x": -120, "y": 0 },
-    { "id": 7, "kind": "detector", "x": 0, "y": 0 },
-    { "id": 8, "kind": "detector", "x": 120, "y": 0 },
-    { "id": 9, "kind": "array", "x": 240, "y": 0 },
-    { "id": 10, "kind": "detector", "x": 360, "y": 0 },
-    { "id": 11, "kind": "detector", "x": 480, "y": 0 },
-    { "id": 12, "kind": "array", "x": 600, "y": 0 },
-    { "id": 13, "kind": "detector", "x": 720, "y": 0 }
+    { "id": 1, "kind": "detector", "x": -720, "y": 30 },
+    { "id": 2, "kind": "detector", "x": -600, "y": -30 },
+    { "id": 3, "kind": "array", "x": -480, "y": 30 },
+    { "id": 4, "kind": "detector", "x": -360, "y": -30 },
+    { "id": 5, "kind": "detector", "x": -240, "y": 30 },
+    { "id": 6, "kind": "array", "x": -120, "y": -30 },
+    { "id": 7, "kind": "detector", "x": 0, "y": 30 },
+    { "id": 8, "kind": "detector", "x": 120, "y": -30 },
+    { "id": 9, "kind": "array", "x": 240, "y": 30 },
+    { "id": 10, "kind": "detector", "x": 360, "y": -30 },
+    { "id": 11, "kind": "detector", "x": 480, "y": 30 },
+    { "id": 12, "kind": "array", "x": 600, "y": -30 },
+    { "id": 13, "kind": "detector", "x": 720, "y": 30 }
   ],
   "drones": [
     {
@@ -34,7 +34,7 @@
         "from": { "x": -450, "y": 300 },
         "to": { "x": 750, "y": -500 },
         "speed_mps": 20,
-        "altitude_m": 30
+        "altitude_m": 70
       }
     },
     {
@@ -45,7 +45,7 @@
         "from": { "x": 416, "y": 251 },
         "to": { "x": -466, "y": -450 },
         "speed_mps": 15,
-        "altitude_m": 40
+        "altitude_m": 80
       }
     },
     {
@@ -56,7 +56,7 @@
         "from": { "x": -125, "y": 318 },
         "to": { "x": 42, "y": -500 },
         "speed_mps": 12,
-        "altitude_m": 50
+        "altitude_m": 90
       }
     }
   ]

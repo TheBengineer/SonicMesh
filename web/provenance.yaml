@@ -6,7 +6,7 @@ components:
     name: Terrain
     tag: STUB
     milestone: M0
-    summary: "Procedural heightmap from the scenario seed, about 5 km by 2 km. Shapes the sound paths (terrain-blocking) but is drawn only as a visual."
+    summary: "Procedural heightmap from the scenario seed, 2 km by 1.4 km in the example, with up to 40 m of relief. Shapes the sound paths (terrain-blocking) but is drawn only as a visual."
     evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/docs/web-demo-plan.md"
     upgrade: "Terrain blocking is MODELLED (see terrain-blocking). The heightmap itself stays STUB until surveyed."
     bias: "No ground wave and no refraction once acoustics arrive."
@@ -274,7 +274,7 @@ components:
     summary: "Detection is the harmonic comb and track from sim/detector/detector.py, ported to TypeScript and held to it frame by frame, at the chosen round-2 setting (theta 0.10). Array bearings come from the four simulated mics, by delay and sum at the detector's harmonics; an arrow shows only while recent estimates agree. Still stand-ins: confidence, class and second line, plus 1-bit snippet audio."
     evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/docs/web-demo-plan.md"
     upgrade: "STUB to SAME CODE in M2: the firmware detector core, built to WASM. Comb settings follow the detector rounds in docs/research/07-detector-baseline.md."
-    bias: "This setting has not met the Phase 1 target. The detector follows one pitch, so a node reports one source at most, and the background has no wind or sound events, so false alarms are lower than on a real site. Pulses, pitch labels and bogies use only each node's detector output and position, read directly from the node rather than from packets the gateway received. A bogie is neighbouring nodes with a matching pitch, so Doppler can split one drone and related pitches can merge two. Bearings are only as good as the simulation allows: each mic's ambient noise is independent, the array is perfectly calibrated and there is no wind, so real arrays will do worse. Truth still enters in two places: class in the packets, and the dashed lines in the Truth view, which use the nearest drone the pitch fits and can name the wrong one. The UI marks the stub in big letters."
+    bias: "This setting has not met the Phase 1 target. The detector follows one pitch, so a node reports one source at most, and the background has no wind or sound events, so false alarms are lower than on a real site. Pulses, pitch labels and bogies use only each node's detector output and position, read directly from the node rather than from packets the gateway received. A bogie is neighbouring nodes with a matching pitch, so Doppler can split one drone and related pitches can merge two. The estimated area fits the comb score falling as 1/distance plus array bearings, read from the node, with an assumed 50 m source height. It has been checked only in this simulation, which has no wind or trees in the sound path, so real scores will scatter more. A merged bogie gets one area between its drones. Bearings are only as good as the simulation allows: each mic's ambient noise is independent, the array is perfectly calibrated and there is no wind, so real arrays will do worse. Truth still enters in two places: class in the packets, and the dashed lines in the Truth view, which use the nearest drone the pitch fits and can name the wrong one. The UI marks the stub in big letters."
 
   - id: ranging
     name: Ranging error
