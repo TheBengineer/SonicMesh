@@ -105,9 +105,24 @@ export function groundColor(t: Terrain, x: number, y: number): [number, number, 
   return [(0.2 + 0.3 * f) * shade, (0.34 + 0.24 * f) * shade, (0.17 + 0.14 * f) * shade];
 }
 
-// Visual only. Behind the line near the demo's gateway, for scale. Heading is clockwise from north, along the length.
-export const TENT = { x: 62, y: -128, width_m: 5, length_m: 10, height_m: 3, heading_deg: 20 };
-export const SUV = { x: 82, y: -112, width_m: 1.9, length_m: 4.8, height_m: 1.8, heading_deg: 75 };
+// Visual only, at real size for scale: a camp behind the line near the demo's gateway, on the side away from the incoming
+// drones. Two blocks of tents, two rows of five each, with the SUVs parked side by side between them as a motor pool.
+// Lengths run north to south.
+export const TENT = { width_m: 5, length_m: 10, height_m: 3 };
+export const SUV = { width_m: 1.9, length_m: 4.8, height_m: 1.8 };
+const CAMP_X = 70;
+const across = (count: number, step: number, y: number): Vec2[] => Array.from({ length: count }, (_, i) => ({ x: CAMP_X + (i - (count - 1) / 2) * step, y }));
+export const TENTS: Vec2[] = [-125, -140, -172, -187].flatMap((y) => across(5, 9, y));
+export const SUVS: Vec2[] = across(5, 4.5, -156);
+const CAMP_CLEAR_M = 8;
+
+function inCamp(x: number, y: number): boolean {
+  const spots = [...TENTS, ...SUVS];
+  const xs = spots.map((p) => p.x);
+  const ys = spots.map((p) => p.y);
+  const reach = TENT.length_m / 2 + CAMP_CLEAR_M;
+  return x > Math.min(...xs) - reach && x < Math.max(...xs) + reach && y > Math.min(...ys) - reach && y < Math.max(...ys) + reach;
+}
 
 // Visual only. Trees come from the seed, not from the sim state.
 export function placeTrees(t: Terrain): Tree[] {
@@ -122,7 +137,7 @@ export function placeTrees(t: Terrain): Tree[] {
     for (let i = 0; i < count; i++) {
       const x = cx + (range(rng, -1, 1) + range(rng, -1, 1)) * spread;
       const y = cy + (range(rng, -1, 1) + range(rng, -1, 1)) * spread;
-      if (!t.contains(x, y) || Math.abs(y - t.roadY) < 25) continue;
+      if (!t.contains(x, y) || Math.abs(y - t.roadY) < 25 || inCamp(x, y)) continue;
       trees.push({ x, y, height_m: range(rng, 7, 14), radius_m: range(rng, 2.5, 4) });
     }
   }

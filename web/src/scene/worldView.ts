@@ -7,7 +7,7 @@ import { areaEdge, type BogieArea } from '../lora/locate';
 import type { LoraView } from '../lora/types';
 import type { Selection } from '../selection';
 import type { NodeKind } from '../sim/scenario';
-import { groundColor, placeTrees, SUV, TENT, type Terrain } from '../sim/terrain';
+import { groundColor, placeTrees, SUV, SUVS, TENT, TENTS, type Terrain } from '../sim/terrain';
 import { DRONE_CLASSES, type World, type WorldState } from '../sim/world';
 import type { DroneClass } from '../sim/scenario';
 import type { Point, ScreenPos } from '../ui/popup';
@@ -166,8 +166,7 @@ function buildRoad(t: Terrain): THREE.Mesh {
   return new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color: 0x3b3f44, side: THREE.DoubleSide }));
 }
 
-// Visual only, at real size for scale: a 5 by 10 m tent and a 4.8 m SUV. Walls and body reach below the ground, so that
-// a slope leaves no gap.
+// Visual only. Walls and body reach below the ground, so that a slope leaves no gap.
 const SINK_M = 1.5;
 
 function solid(geo: THREE.BufferGeometry, color: number, x: number, y: number, z: number): THREE.Mesh {
@@ -208,13 +207,12 @@ function buildSuv(): THREE.Group {
 
 export function buildCamp(t: Terrain): THREE.Group {
   const camp = new THREE.Group();
-  const place = (obj: THREE.Group, at: { x: number; y: number; heading_deg: number }): void => {
+  const place = (obj: THREE.Group, at: { x: number; y: number }): void => {
     obj.position.copy(toScene(at.x, at.y, t.height(at.x, at.y)));
-    obj.rotation.y = (at.heading_deg * Math.PI) / 180;
     camp.add(obj);
   };
-  place(buildTent(), TENT);
-  place(buildSuv(), SUV);
+  for (const at of TENTS) place(buildTent(), at);
+  for (const at of SUVS) place(buildSuv(), at);
   return camp;
 }
 
@@ -815,15 +813,10 @@ export class WorldView {
     ctx.moveTo(sx(-sw / 2), sy(terrain.roadY));
     ctx.lineTo(sx(sw / 2), sy(terrain.roadY));
     ctx.stroke();
-    // The tent and SUV at their real size, which is what they are here to show.
-    for (const [item, color] of [[TENT, '#6b7530'], [SUV, '#c8ccc0']] as const) {
-      const a = (item.heading_deg * Math.PI) / 180;
-      ctx.save();
-      ctx.translate(sx(item.x), sy(item.y));
-      ctx.rotate(a);
+    // The camp at its real size, which is what it is here to show.
+    for (const [size, spots, color] of [[TENT, TENTS, '#6b7530'], [SUV, SUVS, '#c8ccc0']] as const) {
       ctx.fillStyle = color;
-      ctx.fillRect((-item.width_m * scale) / 2, (-item.length_m * scale) / 2, item.width_m * scale, item.length_m * scale);
-      ctx.restore();
+      for (const at of spots) ctx.fillRect(sx(at.x) - (size.width_m * scale) / 2, sy(at.y) - (size.length_m * scale) / 2, size.width_m * scale, size.length_m * scale);
     }
 
     if (lora) {

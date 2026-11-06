@@ -4,7 +4,7 @@ import type { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import { describe, expect, it } from 'vitest';
 import { cameraStick } from '../src/input/sticks';
 import { buildCamp, WorldView, toScene } from '../src/scene/worldView';
-import { SUV, TENT } from '../src/sim/terrain';
+import { placeTrees, SUV, SUVS, Terrain, TENT, TENTS } from '../src/sim/terrain';
 
 const terrain = { height: () => 10 };
 const truthOn = {
@@ -113,27 +113,48 @@ describe('manual flying follows the camera', () => {
   });
 });
 
-describe('tent and SUV', () => {
-  const size = (obj: THREE.Object3D): THREE.Vector3 => {
-    const flat = obj.clone();
-    flat.rotation.y = 0;
-    flat.updateMatrixWorld(true);
-    return new THREE.Box3().setFromObject(flat).getSize(new THREE.Vector3());
-  };
+describe('camp', () => {
+  const size = (obj: THREE.Object3D): THREE.Vector3 => new THREE.Box3().setFromObject(obj).getSize(new THREE.Vector3());
   const camp = buildCamp({ height: () => 10 } as never);
+  const tents = camp.children.slice(0, TENTS.length);
+  const suvs = camp.children.slice(TENTS.length);
+  const rows = (spots: { y: number }[]): number[] => [...new Set(spots.map((p) => p.y))];
 
-  it('stand on the ground at their spots', () => {
-    const [tent, suv] = camp.children;
-    expect(tent.position.toArray()).toEqual(toScene(TENT.x, TENT.y, 10).toArray());
-    expect(suv.position.toArray()).toEqual(toScene(SUV.x, SUV.y, 10).toArray());
+  it('has two blocks of 5 by 2 tents with a row of five SUVs between them', () => {
+    expect(TENTS).toHaveLength(20);
+    expect(rows(TENTS)).toHaveLength(4);
+    for (const y of rows(TENTS)) expect(TENTS.filter((p) => p.y === y)).toHaveLength(5);
+    expect(SUVS).toHaveLength(5);
+    expect(rows(SUVS)).toHaveLength(1);
+    expect(TENTS.filter((p) => p.y > SUVS[0].y)).toHaveLength(10);
+    expect(TENTS.filter((p) => p.y < SUVS[0].y)).toHaveLength(10);
+    expect(camp.children).toHaveLength(25);
+    camp.children.forEach((c, i) => {
+      const at = [...TENTS, ...SUVS][i];
+      expect(c.position.toArray()).toEqual(toScene(at.x, at.y, 10).toArray());
+    });
   });
 
   it('are their real size', () => {
-    const [tent, suv] = camp.children.map(size);
+    const tent = size(tents[0]);
     expect(tent.x).toBeCloseTo(TENT.width_m, 1);
     expect(tent.z).toBeCloseTo(TENT.length_m, 1);
-    expect(new THREE.Box3().setFromObject(camp.children[0]).max.y).toBeCloseTo(10 + TENT.height_m, 1);
+    expect(new THREE.Box3().setFromObject(tents[0]).max.y).toBeCloseTo(10 + TENT.height_m, 1);
+    const suv = size(suvs[0]);
     expect(suv.z).toBeCloseTo(SUV.length_m, 1);
     expect(suv.x).toBeLessThan(SUV.width_m + 0.4);
+  });
+
+  it('nothing overlaps, and no tree stands in the camp', () => {
+    const clear = (spots: { x: number; y: number }[], w: number, l: number): void => {
+      spots.forEach((a, i) => spots.slice(i + 1).forEach((b) => expect(Math.abs(a.x - b.x) >= w || Math.abs(a.y - b.y) >= l).toBe(true)));
+    };
+    clear(TENTS, TENT.width_m, TENT.length_m);
+    clear(SUVS, SUV.width_m, SUV.length_m);
+    for (const a of SUVS) for (const b of TENTS) expect(Math.abs(a.y - b.y)).toBeGreaterThan((SUV.length_m + TENT.length_m) / 2);
+    const terrain = new Terrain(20261104, { size_m: [2000, 1400], amplitude_m: 40, wavelength_m: 220, road_y_m: 90 });
+    for (const tree of placeTrees(terrain)) {
+      for (const at of [...TENTS, ...SUVS]) expect(Math.hypot(tree.x - at.x, tree.y - at.y)).toBeGreaterThan(8);
+    }
   });
 });
