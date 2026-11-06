@@ -32,12 +32,24 @@ describe('detection lines in the 3D view', () => {
     const bogie = { letter: 'A', pitchHz: 600, nodeIds: [1, 2], area: { x: 60, y: 200, majorM: 80, minorM: 40, angleRad: 0, nodeIds: [1, 2] } };
     proto.updateDetections.call(self, { terrain }, { ...truthOn, truth: false }, { nodes: [node(1), node(2)], bogies: [bogie] });
     const kids = self.detectGroup.children;
-    // Two discs, one band and a label for the bogie, two discs, a line per node and a label for the area, and a pulse and
-    // label per node.
+    // Two discs, one band and a label for the bogie, two discs and a line per node for the area, and a pulse and label per
+    // node.
     expect(kids.filter((k) => k instanceof Line2)).toHaveLength(3);
-    expect(kids.filter((k) => k instanceof THREE.Sprite)).toHaveLength(4);
+    expect(kids.filter((k) => k instanceof THREE.Sprite)).toHaveLength(3);
     expect(kids.filter((k) => k instanceof THREE.Mesh && !(k instanceof Line2))).toHaveLength(6);
     expect((kids.find((k) => k instanceof Line2) as Line2).material.dashed).toBe(false);
+  });
+
+  it('hover a bogie name over its estimated area, or over its nodes without one', () => {
+    const proto = WorldView.prototype as unknown as Record<string, (...a: unknown[]) => void>;
+    const at: THREE.Vector3[] = [];
+    const self = { detectGroup: new THREE.Group(), packetPos: proto.packetPos, label: (_t: string, _c: number, p: THREE.Vector3) => (at.push(p), new THREE.Sprite()) };
+    const area = { x: 60, y: 200, majorM: 80, minorM: 40, angleRad: 0, nodeIds: [] };
+    proto.updateDetections.call(self, { terrain }, { ...truthOn, truth: false }, { nodes: [], bogies: [{ letter: 'A', pitchHz: 600, nodeIds: [1], area }] });
+    proto.updateDetections.call(self, { terrain }, { ...truthOn, truth: false }, { nodes: [], bogies: [{ letter: 'A', pitchHz: 600, nodeIds: [1], area: null }] });
+    expect(at[0].x).toBe(60);
+    expect(at[0].z).toBe(-200);
+    expect(at[1].x).toBe(0);
   });
 
   it('are hidden with Truth off', () => {

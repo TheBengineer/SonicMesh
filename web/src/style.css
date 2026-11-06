@@ -758,3 +758,18 @@ h3 {
 #waterfalls .note {
   margin: 6px 0 0;
 }
+
+a.button-link {
+  display: inline-block;
+  font: inherit;
+  color: var(--text);
+  background: #222c36;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 4px 9px;
+  text-decoration: none;
+}
+
+a.button-link:hover {
+  border-color: var(--accent);
+}

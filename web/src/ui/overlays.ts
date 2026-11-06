@@ -2,6 +2,7 @@ import { tagClass, type Ledger } from '../provenance/ledger';
 import { esc } from './dom';
 
 const REPO = 'https://github.com/TheBengineer/SonicMesh';
+const LINKEDIN = 'https://www.linkedin.com/in/bengineeringelm/';
 
 function closeOnClick(dialog: HTMLDialogElement): void {
   dialog.addEventListener('click', (e) => {
@@ -20,6 +21,10 @@ export function renderIntro(dialog: HTMLDialogElement, onStart: () => void): voi
       simulation lets you watch one get picked up, hear what each node hears, and fly it yourself.
     </p>
     <p>The simulated nodes run the ACTUAL detection algorithms they would run in the field.</p>
+    <div class="links">
+      <a href="${REPO}" target="_blank" rel="noopener">Repository on GitHub</a>
+      <a href="${LINKEDIN}" target="_blank" rel="noopener">LinkedIn</a>
+    </div>
     <button class="start" autofocus>Close and start</button>
   `;
   dialog.querySelector('.start')?.addEventListener('click', () => {
@@ -45,6 +50,7 @@ export function renderAbout(dialog: HTMLDialogElement): void {
     </p>
     <div class="links">
       <a href="${REPO}" target="_blank" rel="noopener">Repository on GitHub</a>
+      <a href="${LINKEDIN}" target="_blank" rel="noopener">LinkedIn</a>
       <a href="${REPO}/blob/main/README.md" target="_blank" rel="noopener">README</a>
       <a href="${REPO}/blob/main/PLAN.md" target="_blank" rel="noopener">PLAN.md</a>
       <a href="${REPO}/blob/main/docs/web-demo-plan.md" target="_blank" rel="noopener">Web demo plan</a>

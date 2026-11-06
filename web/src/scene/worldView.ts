@@ -508,8 +508,9 @@ export class WorldView {
         });
         this.detectGroup.add(new Line2(new LineGeometry().setPositions(points), new LineMaterial({ color, linewidth: BOGIE_LINE_PX, transparent: true, opacity: 0.45 })));
       }
+      // Over the estimated area when there is one, else over the nodes that hear it.
       const mid = members[members.length >> 1];
-      this.detectGroup.add(this.label(bogieLabel(b), color, groundAt(mid.x, mid.y, 130), 1.4));
+      this.detectGroup.add(this.label(bogieLabel(b), color, b.area ? groundAt(b.area.x, b.area.y, 130) : groundAt(mid.x, mid.y, 130), 1.4));
       if (b.area) {
         const at = groundAt(b.area.x, b.area.y, 2);
         for (const k of [1, 0.5]) {
@@ -530,7 +531,6 @@ export class WorldView {
           line.renderOrder = OVER_TERRAIN;
           this.detectGroup.add(line);
         }
-        this.detectGroup.add(this.label(`${b.letter} estimated`, color, groundAt(b.area.x, b.area.y, 40), 0.8));
       }
     }
 
@@ -895,13 +895,14 @@ export class WorldView {
       placed.push([x, row]);
       text(`${Math.round(view.pitchHz)} Hz`, x, row, css(DETECT_PULSE), 18);
     }
-    // Each bogie's name below its band and the pitch rows, stacked so overlapping bands stay readable.
+    // Each bogie's name over its estimated area, or without one below its band and the pitch rows, stacked so overlapping
+    // bands stay readable.
     (lora?.bogies ?? []).forEach((b, i) => {
       const members = b.nodeIds.map((id) => state.nodes.find((o) => o.id === id)).filter((o) => o !== undefined);
       if (members.length === 0) return;
       const mid = members[members.length >> 1];
-      text(bogieLabel(b), sx(mid.x), sy(mid.y) + 10 * ICON_SCALE + 72 + i * 26, css(bogieColor(b.letter)), 22);
-      if (b.area) text(`${b.letter} estimated`, sx(b.area.x), sy(b.area.y), css(bogieColor(b.letter)), 18);
+      if (b.area) text(bogieLabel(b), sx(b.area.x), sy(b.area.y) - (b.area.minorM * scale) / 2, css(bogieColor(b.letter)), 22);
+      else text(bogieLabel(b), sx(mid.x), sy(mid.y) + 10 * ICON_SCALE + 72 + i * 26, css(bogieColor(b.letter)), 22);
     });
     ctx.textAlign = 'start';
 

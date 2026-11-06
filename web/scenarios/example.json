@@ -31,8 +31,8 @@
       "class": "fpv",
       "path": {
         "kind": "crossing",
-        "from": { "x": -450, "y": 300 },
-        "to": { "x": 750, "y": -500 },
+        "from": { "x": -650, "y": 300 },
+        "to": { "x": -250, "y": -500 },
         "speed_mps": 20,
         "altitude_m": 70
       }
@@ -42,8 +42,8 @@
       "class": "mini",
       "path": {
         "kind": "crossing",
-        "from": { "x": 416, "y": 251 },
-        "to": { "x": -466, "y": -450 },
+        "from": { "x": 560, "y": 480 },
+        "to": { "x": 300, "y": -500 },
         "speed_mps": 15,
         "altitude_m": 80
       }
@@ -53,8 +53,8 @@
       "class": "matrice",
       "path": {
         "kind": "crossing",
-        "from": { "x": -125, "y": 318 },
-        "to": { "x": 42, "y": -500 },
+        "from": { "x": -60, "y": 560 },
+        "to": { "x": 120, "y": -500 },
         "speed_mps": 12,
         "altitude_m": 90
       }

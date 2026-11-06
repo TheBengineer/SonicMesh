@@ -182,12 +182,12 @@ describe('LoRa MAC and schedule', () => {
     let linked = 0;
     // The packet log keeps only the newest packets, so collect types during the run.
     const types = new Set<string>();
-    // the drone passes node 7 at about 27 s; run to 90 s, past the end of the event
+    // the drone crosses near node 3 at about 17 s; run to 90 s, past the end of the event
     for (let i = 0; i < 9000; i++) {
       runner.stepTick();
       engine.tick(runner.world);
       runner.lora.observeFromEngine(runner.world, engine);
-      maxBand = Math.max(maxBand, engine.bandLevel('7.0'));
+      maxBand = Math.max(maxBand, engine.bandLevel('3.0'));
       ambient = engine.ambientDb();
       if (i % 50 === 0) {
         const snap = runner.lora.snapshot();
