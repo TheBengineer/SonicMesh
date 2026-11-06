@@ -3,7 +3,7 @@ import { esc, need } from './dom';
 
 // The "How it works" walkthrough: a dialog of short steps, each with a small scene to play with. The scenes are sketches
 // that teach the idea, on made-up spectra and tracks, so they do not run the detector. Every result figure on the
-// status and patience steps comes from docs/research/07-detector-baseline.md and is simulated.
+// patience step comes from docs/research/07-detector-baseline.md and is simulated.
 
 const REPO = 'https://github.com/TheBengineer/SonicMesh';
 
@@ -713,53 +713,6 @@ function installScene(ui: HTMLElement): Scene {
   };
 }
 
-// Doc 07 section 11.5: the r3 draw, folds 4-5 clips, 199 crossings below 100 m. Gateway Pd.
-export const STATUS_RESULTS = {
-  default: { All: 0.1, FPV: 0.35, Mini: 0, Matrice: 0, note: 'The current default detector.' },
-  long: { All: 0.29, FPV: 0.89, Mini: 0.13, Matrice: 0, note: 'A candidate that listens eight times longer. It’s still not the default, because it does far worse in very noisy places.' },
-};
-const STATUS_TARGET = 0.95;
-
-function statusScene(ui: HTMLElement): Scene {
-  let setting: keyof typeof STATUS_RESULTS = 'default';
-  let grow = 0;
-  ui.innerHTML = `<div data-setting></div><p class="how-result" data-result aria-live="polite"></p>`;
-  const result = need<HTMLElement>(ui, '[data-result]');
-  result.textContent = STATUS_RESULTS[setting].note;
-  chips(need<HTMLElement>(ui, '[data-setting]'), [['default', 'Default detector'], ['long', 'Long-frame candidate']], setting, (s) => {
-    setting = s;
-    grow = 0;
-    result.textContent = STATUS_RESULTS[s].note;
-  });
-  return {
-    draw(v) {
-      grow = Math.min(1, grow + v.dt * 1.6);
-      clear(v);
-      const data = STATUS_RESULTS[setting];
-      const rows: [string, number][] = [['All', data.All], ['FPV', data.FPV], ['Mini', data.Mini], ['Matrice', data.Matrice]];
-      const left = 76;
-      const right = v.w - 58;
-      const top = 44;
-      const rowH = (v.h - top - 34) / rows.length;
-      label(v, 'Low crossings confirmed, in simulation', 12, 22, TEXT, 13);
-      rows.forEach(([name, value], i) => {
-        const y = top + i * rowH;
-        const h = Math.min(30, rowH * 0.6);
-        label(v, name, left - 10, y + h / 2 + 4, TEXT, 13, 'right');
-        v.g.fillStyle = GRID;
-        v.g.fillRect(left, y, right - left, h);
-        v.g.fillStyle = i === 0 ? AMBER : BLUE;
-        v.g.fillRect(left, y, (right - left) * value * grow, h);
-        label(v, `${Math.round(value * 100)}%`, right + 8, y + h / 2 + 4, TEXT, 13);
-      });
-      const tx = left + (right - left) * STATUS_TARGET;
-      v.g.fillStyle = RED;
-      v.g.fillRect(tx - 1, top - 6, 2, v.h - top - 22);
-      label(v, 'Target 95%', tx, v.h - 10, RED, 12, 'center');
-    },
-  };
-}
-
 // The photo of a mock node, from web/public. Until it is set the step shows a labelled sketch.
 const NODE_PHOTO: { src: string; alt: string; caption: string } | null = {
   src: '/mock-node.webp',
@@ -897,14 +850,6 @@ const STEPS: Step[] = [
     copy: `<p>Detector nodes have no GPS, to save cost and power. The installer opens a web page, and the phone plays its GPS fix as sound while the node is set down.</p>
       <p>Later, nodes range each other over LoRa to catch one that has been moved or swapped, and report their health every 5 minutes in 23 bytes.</p>`,
     scene: installScene,
-  },
-  {
-    kicker: 'Where it stands',
-    title: 'It doesn’t work well enough yet',
-    copy: `<p>The goal is 95% of low crossings confirmed, with at most one false alarm per km per day. In simulation neither setting gets close on detection, and FPVs make up nearly all of it.</p>
-      <p>Mini and matrice are the hard cases: nodes do hear them, but rarely two in a row on one pitch. They’re out of the demo until that changes.</p>
-      <p>Much of this rests on an <em>assumed</em> background noise level, and nothing has been tested in a field yet. That’s the next big step.</p>`,
-    scene: statusScene,
   },
   {
     kicker: 'Your turn',
