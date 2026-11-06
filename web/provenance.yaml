@@ -34,7 +34,7 @@ components:
     milestone: M0
     summary: "Marker for a detector node. The node core is not in M0; the marker holds a position and a type."
     evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/docs/research/04-hardware-boundaries.md"
-    upgrade: "STUB to SAME CODE in M2: the firmware detector core, built to WASM."
+    upgrade: "STUB to SAME CODE in M2: the firmware detector core, built to WASM. Comb settings follow the detector rounds in docs/research/07-detector-baseline.md."
 
   - id: node-array
     name: Array node
@@ -271,10 +271,10 @@ components:
     name: Node detection stub
     tag: STUB
     milestone: M3
-    summary: "What a node reports before the M2 detector core exists: a band-level threshold (2 dB over the ambient for 0.5 s, released under 1 dB for 0.5 s), bearing for array nodes, confidence, class and line frequencies from truth with noise, plus 1-bit snippet audio."
+    summary: "Detection is the harmonic comb and track from sim/detector/detector.py, ported to TypeScript and held to it frame by frame, at the chosen round-2 setting (theta 0.10). Array bearings come from the four simulated mics, by delay and sum at the detector's harmonics; an arrow shows only while recent estimates agree. Still stand-ins: confidence, class and second line, plus 1-bit snippet audio."
     evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/docs/web-demo-plan.md"
-    upgrade: "STUB to SAME CODE in M2: the firmware detector core, built to WASM."
-    bias: "Demo nodes sit 120 m apart because the stub then hears each drone class up to 100 m altitude across the gap between nodes (measured range at 30 m: 165-224 m). The demo background has no wind or sound events, so this threshold would false alarm on a real site; the 350 m design and the real detector in sim/perimeter are separate. Detection fields follow truth, not a detector. Bearings are truth plus N(0, 5 degrees). The blue line from a detecting node goes to the nearest true drone, so it cannot show a wrong match. The UI marks the stub in big letters."
+    upgrade: "STUB to SAME CODE in M2: the firmware detector core, built to WASM. Comb settings follow the detector rounds in docs/research/07-detector-baseline.md."
+    bias: "This setting has not met the Phase 1 target. The detector follows one pitch, so a node reports one source at most, and the background has no wind or sound events, so false alarms are lower than on a real site. Pulses, pitch labels and bogies use only each node's detector output and position, read directly from the node rather than from packets the gateway received. A bogie is neighbouring nodes with a matching pitch, so Doppler can split one drone and related pitches can merge two. Bearings are only as good as the simulation allows: each mic's ambient noise is independent, the array is perfectly calibrated and there is no wind, so real arrays will do worse. Truth still enters in two places: class in the packets, and the dashed lines in the Truth view, which use the nearest drone the pitch fits and can name the wrong one. The UI marks the stub in big letters."
 
   - id: ranging
     name: Ranging error

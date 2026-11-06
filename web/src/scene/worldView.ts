@@ -30,8 +30,23 @@ const ICON_SCALE = 3;
 const SELECTED_SCALE = 5;
 const RING_SELECTED = 0xffe066;
 const RING_COLOR = { detector: 0x4aa3ff, array: 0xff9f43, gateway: 0x3ddc84, drone: 0xff4d6d } as const;
-const DETECT_LINE = 0x5fb4ff; // --accent in style.css
+const DETECT_LINE = 0x9aa4b2; // the Truth view's link from a node to a drone
+const DETECT_PULSE = 0xff4d6d;
+const PULSE_PERIOD_S = 1.2;
+// One colour per bogie letter.
+const BOGIE_COLORS = [0xe879f9, 0xfde047, 0x22d3ee, 0xa3e635];
+const bogieColor = (letter: string): number => BOGIE_COLORS[(letter.charCodeAt(0) - 65) % BOGIE_COLORS.length];
+const bogieLabel = (b: { letter: string; pitchHz: number }): string => `Bogie ${b.letter}, ~${Math.round(b.pitchHz / 10) * 10} Hz`;
+const css = (color: number): string => `#${color.toString(16).padStart(6, '0')}`;
 const DETECT_LINE_PX = 5;
+const BOGIE_BAND_M = 50;
+const BOGIE_LINE_PX = 18;
+const NODE_RING_M = 39;
+const LABEL_WIDTH_M = 240;
+const PITCH_LABEL_PX = 70;
+const BEARING_ARROW = 0xffffff;
+const BEARING_ARROW_M = 90;
+const BEARING_ARROW_PX = 44;
 
 function isSelected(selection: Selection, kind: 'node' | 'drone' | 'gateway', id = 0): boolean {
   if (!selection) return false;
@@ -270,6 +285,7 @@ export class WorldView {
   private readonly droneGroup = new THREE.Group();
   private readonly packetGroup = new THREE.Group();
   private readonly detectGroup = new THREE.Group();
+  private readonly labelTextures = new Map<string, THREE.CanvasTexture>();
   private readonly gateway = buildGateway();
   private map: HTMLCanvasElement | null = null;
   private mapCtx: CanvasRenderingContext2D | null = null;
@@ -454,15 +470,60 @@ export class WorldView {
 
     this.updateRings(world, state, selection);
     this.updatePackets(world, state, lora, nowS);
-    this.updateDetections(world, state, lora);
+    this.updateDetections(world, state, lora, nowS);
   }
 
-  // A straight line from each detecting node to every drone it detects.
-  private updateDetections(world: World, state: WorldState, lora: LoraView | null): void {
+  // What nodes report: a pulse and pitch on each detecting node, an array's bearing arrow, a band over each bogie, and a
+  // soft marker where a bogie's arrows cross. Only the Truth view links a node to a drone.
+  private updateDetections(world: World, state: WorldState, lora: LoraView | null, nowS = 0): void {
     disposeGroup(this.detectGroup);
     this.detectGroup.clear();
     if (!lora) return;
+    const groundAt = (x: number, y: number, lift: number): THREE.Vector3 => toScene(x, y, world.terrain.height(x, y) + lift);
+    const flat = (geo: THREE.BufferGeometry, color: number, opacity: number, at: THREE.Vector3): THREE.Mesh => {
+      const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color, transparent: true, opacity, side: THREE.DoubleSide, depthWrite: false }));
+      mesh.rotation.x = -Math.PI / 2;
+      mesh.position.copy(at);
+      mesh.raycast = () => {};
+      return mesh;
+    };
+    const phase = ((nowS % PULSE_PERIOD_S) + PULSE_PERIOD_S) % PULSE_PERIOD_S / PULSE_PERIOD_S;
+
+    for (const b of lora.bogies ?? []) {
+      const members = b.nodeIds.map((id) => state.nodes.find((n) => n.id === id)).filter((n) => n !== undefined);
+      if (members.length === 0) continue;
+      const color = bogieColor(b.letter);
+      for (const n of members) this.detectGroup.add(flat(new THREE.CircleGeometry(BOGIE_BAND_M, 32), color, 0.28, groundAt(n.x, n.y, 1)));
+      if (members.length > 1) {
+        const points = members.flatMap((n) => {
+          const p = groundAt(n.x, n.y, 1.5);
+          return [p.x, p.y, p.z];
+        });
+        this.detectGroup.add(new Line2(new LineGeometry().setPositions(points), new LineMaterial({ color, linewidth: BOGIE_LINE_PX, transparent: true, opacity: 0.45 })));
+      }
+      const mid = members[members.length >> 1];
+      this.detectGroup.add(this.label(bogieLabel(b), color, groundAt(mid.x, mid.y, 130), 1.4));
+      if (b.fix) {
+        const at = groundAt(b.fix.x, b.fix.y, 2);
+        this.detectGroup.add(flat(new THREE.CircleGeometry(b.fix.radiusM, 40), color, 0.22, at));
+        this.detectGroup.add(flat(new THREE.CircleGeometry(b.fix.radiusM * 0.5, 40), color, 0.22, at));
+      }
+    }
+
     for (const v of lora.nodes) {
+      const node = state.nodes.find((n) => n.id === v.id);
+      if (v.detecting && node) {
+        const r = NODE_RING_M * (1 + 0.5 * phase);
+        this.detectGroup.add(flat(new THREE.RingGeometry(r, r + 6, 40), DETECT_PULSE, 0.9 * (1 - phase), groundAt(node.x, node.y, 2)));
+        if (v.pitchHz > 0) this.detectGroup.add(this.label(`${Math.round(v.pitchHz / 10) * 10} Hz`, DETECT_PULSE, groundAt(node.x, node.y, 70), 0.8));
+      }
+      if (v.bearingDeg !== null && v.bearingDeg !== undefined) {
+        const a = this.packetPos(v.id, state, world.terrain);
+        const rad = (v.bearingDeg * Math.PI) / 180;
+        const dir = toScene(Math.sin(rad), Math.cos(rad), 0).sub(toScene(0, 0, 0)).normalize();
+        this.detectGroup.add(new THREE.ArrowHelper(dir, a, BEARING_ARROW_M, BEARING_ARROW, BEARING_ARROW_M * 0.3, BEARING_ARROW_M * 0.18));
+      }
+      if (!state.truth) continue;
       for (const id of v.targetIds) {
         const d = state.drones.find((o) => o.id === id);
         if (!d) continue;
@@ -470,9 +531,40 @@ export class WorldView {
         const b = toScene(d.x, d.y, d.alt);
         const geo = new LineGeometry().setPositions([a.x, a.y, a.z, b.x, b.y, b.z]);
         // A plain WebGL line is always 1 pixel wide. Line2 keeps this width at any distance.
-        this.detectGroup.add(new Line2(geo, new LineMaterial({ color: DETECT_LINE, linewidth: DETECT_LINE_PX })));
+        const line = new Line2(geo, new LineMaterial({ color: DETECT_LINE, linewidth: DETECT_LINE_PX, dashed: true, dashSize: 12, gapSize: 8 }));
+        line.computeLineDistances();
+        this.detectGroup.add(line);
       }
     }
+  }
+
+  // A text label that faces the camera. Textures are kept per text and colour, since these repeat every frame.
+  private label(text: string, color: number, at: THREE.Vector3, size: number): THREE.Sprite {
+    const key = `${color}:${text}`;
+    let texture = this.labelTextures.get(key);
+    if (!texture) {
+      const canvas = document.createElement('canvas');
+      canvas.width = 512;
+      canvas.height = 96;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.font = 'bold 56px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.lineWidth = 10;
+        ctx.strokeStyle = 'rgba(0, 0, 0, 0.8)';
+        ctx.strokeText(text, 256, 48);
+        ctx.fillStyle = css(color);
+        ctx.fillText(text, 256, 48);
+      }
+      texture = new THREE.CanvasTexture(canvas);
+      this.labelTextures.set(key, texture);
+    }
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false }));
+    sprite.position.copy(at);
+    sprite.scale.set(LABEL_WIDTH_M * size, (LABEL_WIDTH_M * size * 96) / 512, 1);
+    sprite.raycast = () => {};
+    return sprite;
   }
 
   // One ground ring per object, always shown; the selected object's ring is larger and yellow.
@@ -617,18 +709,51 @@ export class WorldView {
       }
       ctx.globalAlpha = 1;
 
-      ctx.strokeStyle = `#${DETECT_LINE.toString(16)}`;
-      ctx.lineWidth = DETECT_LINE_PX;
-      for (const v of lora.nodes) {
-        const n = state.nodes.find((o) => o.id === v.id);
-        for (const id of v.targetIds) {
-          const d = state.drones.find((o) => o.id === id);
-          if (!n || !d) continue;
+      // Bogies go under the markers: a band over their nodes, and a soft patch where their arrows cross.
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      for (const b of lora.bogies) {
+        const members = b.nodeIds.map((id) => state.nodes.find((o) => o.id === id)).filter((o) => o !== undefined);
+        if (members.length === 0) continue;
+        ctx.strokeStyle = css(bogieColor(b.letter));
+        ctx.globalAlpha = 0.32;
+        ctx.lineWidth = 12 * ICON_SCALE * 2;
+        ctx.beginPath();
+        ctx.moveTo(sx(members[0].x), sy(members[0].y));
+        // A single point still needs a segment for the round cap to draw.
+        for (const o of members.length > 1 ? members.slice(1) : members) ctx.lineTo(sx(o.x) + (members.length > 1 ? 0 : 0.01), sy(o.y));
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+        if (b.fix) {
+          const [fx, fy, fr] = [sx(b.fix.x), sy(b.fix.y), Math.max(16, b.fix.radiusM * scale)];
+          const glow = ctx.createRadialGradient(fx, fy, 0, fx, fy, fr);
+          glow.addColorStop(0, `${css(bogieColor(b.letter))}99`);
+          glow.addColorStop(1, `${css(bogieColor(b.letter))}00`);
+          ctx.fillStyle = glow;
           ctx.beginPath();
-          ctx.moveTo(sx(n.x), sy(n.y));
-          ctx.lineTo(sx(d.x), sy(d.y));
-          ctx.stroke();
+          ctx.arc(fx, fy, fr, 0, Math.PI * 2);
+          ctx.fill();
         }
+      }
+      ctx.lineCap = 'butt';
+      ctx.lineJoin = 'miter';
+
+      if (state.truth) {
+        ctx.strokeStyle = css(DETECT_LINE);
+        ctx.lineWidth = DETECT_LINE_PX - 2;
+        ctx.setLineDash([10, 8]);
+        for (const v of lora.nodes) {
+          const n = state.nodes.find((o) => o.id === v.id);
+          for (const id of v.targetIds) {
+            const d = state.drones.find((o) => o.id === id);
+            if (!n || !d) continue;
+            ctx.beginPath();
+            ctx.moveTo(sx(n.x), sy(n.y));
+            ctx.lineTo(sx(d.x), sy(d.y));
+            ctx.stroke();
+          }
+        }
+        ctx.setLineDash([]);
       }
     }
 
@@ -672,12 +797,76 @@ export class WorldView {
       ctx.fill();
       ring(x, y, 10 * k, '#ff4d6d', k === SELECTED_SCALE);
     }
+
+    // A pulse on each detecting node, then its pitch if that fits. Neighbours are close on this map, and the bogie's name
+    // already gives the pitch, so a label that would overlap another is left out.
+    const phase = ((nowS % PULSE_PERIOD_S) + PULSE_PERIOD_S) % PULSE_PERIOD_S / PULSE_PERIOD_S;
+    ctx.textAlign = 'center';
+    const text = (label: string, x: number, y: number, color: string, px: number): void => {
+      ctx.font = `bold ${px}px sans-serif`;
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = 'rgba(0, 0, 0, 0.85)';
+      ctx.strokeText(label, x, y);
+      ctx.fillStyle = color;
+      ctx.fillText(label, x, y);
+    };
+    const placed: [number, number][] = [];
+    for (const n of state.nodes) {
+      const view = lora?.nodes.find((v) => v.id === n.id);
+      if (!view?.detecting) continue;
+      const k = isSelected(selection, 'node', n.id) ? SELECTED_SCALE : ICON_SCALE;
+      const [x, y] = [sx(n.x), sy(n.y)];
+      ctx.strokeStyle = css(DETECT_PULSE);
+      ctx.lineWidth = 3;
+      ctx.globalAlpha = 0.9 * (1 - phase);
+      ctx.beginPath();
+      ctx.arc(x, y, 10 * k * (1 + 0.5 * phase), 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      if (view.pitchHz <= 0) continue;
+      const row = [y + 10 * k + 22, y + 10 * k + 44].find((ty) => !placed.some(([px, py]) => py === ty && Math.abs(px - x) < PITCH_LABEL_PX));
+      if (row === undefined) continue;
+      placed.push([x, row]);
+      text(`${Math.round(view.pitchHz)} Hz`, x, row, css(DETECT_PULSE), 18);
+    }
+    // Each bogie's name below its band and the pitch rows, stacked so overlapping bands stay readable.
+    (lora?.bogies ?? []).forEach((b, i) => {
+      const members = b.nodeIds.map((id) => state.nodes.find((o) => o.id === id)).filter((o) => o !== undefined);
+      if (members.length === 0) return;
+      const mid = members[members.length >> 1];
+      text(bogieLabel(b), sx(mid.x), sy(mid.y) + 10 * ICON_SCALE + 72 + i * 26, css(bogieColor(b.letter)), 22);
+    });
+    ctx.textAlign = 'start';
+
+    // Array nodes' bearings, on top of every marker. An arrow shows direction only, so its length is fixed on screen.
+    for (const n of state.nodes) {
+      const view = lora?.nodes.find((v) => v.id === n.id);
+      if (!view || view.bearingDeg === null) continue;
+      const k = isSelected(selection, 'node', n.id) ? SELECTED_SCALE : ICON_SCALE;
+      const [x, y] = [sx(n.x), sy(n.y)];
+      const rad = (view.bearingDeg * Math.PI) / 180;
+      const dx = Math.sin(rad);
+      const dy = -Math.cos(rad);
+      const r0 = 10 * k + 2;
+      const [x1, y1] = [x + dx * (r0 + BEARING_ARROW_PX), y + dy * (r0 + BEARING_ARROW_PX)];
+      const head = BEARING_ARROW_PX * 0.4;
+      const angle = Math.atan2(dy, dx);
+      ctx.strokeStyle = `#${BEARING_ARROW.toString(16)}`;
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.moveTo(x + dx * r0, y + dy * r0);
+      ctx.lineTo(x1, y1);
+      ctx.moveTo(x1 - head * Math.cos(angle - 0.5), y1 - head * Math.sin(angle - 0.5));
+      ctx.lineTo(x1, y1);
+      ctx.lineTo(x1 - head * Math.cos(angle + 0.5), y1 - head * Math.sin(angle + 0.5));
+      ctx.stroke();
+    }
     ctx.fillStyle = '#dfe6ee';
     ctx.font = '12px system-ui, sans-serif';
     const mode = lora ? `LoRa ${lora.mode} mode, superframe ${lora.superframe}` : 'LoRa starting';
     ctx.fillText(mode, m, h - 10);
     ctx.fillStyle = '#8a98a8';
-    ctx.fillText('lines: green decoded, amber collision, red range, purple half-duplex, blue node detects drone', m, h - 26);
+    ctx.fillText('lines: green decoded, amber collision, red range, purple half-duplex, dashed grey in Truth: the nearest drone whose pitch fits', m, h - 26);
   }
 
   // Where an object sits in sim coordinates, or null if it is gone.

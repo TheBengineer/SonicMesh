@@ -2,7 +2,7 @@ import { MicAnalysis, TILE_COLS, TILE_ROWS } from '../audio/analysis';
 import type { AudioRing } from '../acoustics/history';
 import type { DetectSpan, DetectState } from '../lora/types';
 import type { NodeKind } from '../sim/scenario';
-import { METER_TICK, meterFraction } from './detectMarks';
+import { METER_TICK, meterFraction, type LevelSample } from './detectMarks';
 import { esc, need, SPEAKER_ICON } from './dom';
 
 // Tiles are at least this wide on screen; the grid fits as many per row as the strip allows.
@@ -31,7 +31,8 @@ export interface StripNode {
   detecting: boolean;
   spans: DetectSpan[];
   listening: boolean;
-  marginDb: number;
+  peak: number;
+  samples: LevelSample[];
   state: DetectState;
 }
 
@@ -65,7 +66,7 @@ export class WaterfallStrip {
         <div class="scale"><span>10 dB</span><span class="ramp"></span><span>90 dB</span></div>
       </div>
       <div class="wf-grid"></div>
-      <p class="note">One tile per node, first mic. The last 6 s, same FFT, dB scale and colours as the Waterfall tab. The bar on the left edge is what the detector measures, the loudness of the 100 to 4000 Hz band (dashed lines) above the background, and its mark is the threshold. It is grey below the mark, amber while it holds above it, and red once detecting. Blue lines mark the start and end of a detection, and each green line follows one harmonic of a drone in the audio. Click a tile to open that node.</p>`;
+      <p class="note">One tile per node, first mic. The last 6 s, same FFT, dB scale and colours as the Waterfall tab. The bar on the left edge is what the detector measures, how strongly the sound forms evenly spaced harmonics between 80 and 4000 Hz (dashed lines), and its mark is the threshold, so a loud sound with no harmonics stays low. It is grey with nothing to follow, amber while it follows a pitch and is not yet sure, and red once detecting. Blue lines mark the start and end of a detection, and the green line follows the pitch it is on. A node follows one pitch at a time, and none of this knows which drone it is hearing. Click a tile to open that node.</p>`;
     this.grid = need<HTMLElement>(root, '.wf-grid');
     new ResizeObserver(() => this.layout()).observe(this.grid);
   }
@@ -82,7 +83,7 @@ export class WaterfallStrip {
       tile.button.setAttribute('aria-pressed', String(selected === n.id));
       tile.speaker.hidden = !n.listening;
       tile.meter.dataset.state = n.state;
-      tile.fill.style.height = `${(meterFraction(n.marginDb) * 100).toFixed(1)}%`;
+      tile.fill.style.height = `${(meterFraction(n.peak) * 100).toFixed(1)}%`;
       const ring = ringFor(n.mic);
       if (!ring) {
         tile.level.textContent = 'no audio';
@@ -94,9 +95,9 @@ export class WaterfallStrip {
         an = new MicAnalysis(n.mic);
         this.analyses.set(n.mic, an);
       }
-      an.update(ring, null, n.detecting);
+      an.update(ring, null);
       an.drawStrip(tile.canvas);
-      an.drawMarks(tile.canvas, n.spans, nowS);
+      an.drawMarks(tile.canvas, n.spans, n.samples, nowS);
       const db = an.latestBandDb();
       tile.level.textContent = db === null ? '—' : `${db.toFixed(0)} dB`;
     }

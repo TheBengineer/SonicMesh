@@ -1,4 +1,5 @@
 import type { Message } from '../protocol/messages';
+import type { Bogie } from './bogies';
 import type { Fate } from './channel';
 
 export interface RxView {
@@ -70,20 +71,26 @@ export interface DetectSpan {
   lineHz: number | null;
 }
 
-// What the detector is doing: below the threshold, above it but still holding, or detecting.
+// What the detector is doing: nothing to follow, following a pitch but not sure yet, or detecting.
 export type DetectState = 'quiet' | 'arming' | 'detecting';
 
 export interface NodeView {
   id: number;
   kind: 'detector' | 'array';
   detecting: boolean;
-  // The drones this detection belongs to, nearest first. The stub takes them from truth.
+  // The nearest drone the detector's pitch fits, from truth. Only the Truth view draws it. Empty when none fits.
   targetIds: number[];
+  // The detector's pitch this frame while it detects, else 0.
+  trackHz: number;
+  // The pitch steadied over the last second, for labels and bogies.
+  pitchHz: number;
+  // An array node's bearing from its own mics, in degrees clockwise from +y. Null when it has none or its estimates disagree.
+  bearingDeg: number | null;
   beaconHeard: boolean;
   lastDetectionS: number;
   detectSpans: DetectSpan[];
-  // The detector's input: the band level above the ambient.
-  marginDb: number;
+  // The best comb score this frame, which the detector compares with its threshold.
+  peak: number;
   detectState: DetectState;
   detections: number;
   queue: number;
@@ -123,6 +130,7 @@ export interface LoraView {
   eventLastS: number;
   packets: PacketView[];
   nodes: NodeView[];
+  bogies: Bogie[];
   gateway: GatewayView;
   grid: GridSlot[];
 }

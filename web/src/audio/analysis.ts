@@ -2,8 +2,7 @@ import { bandLevelDb, fft, hann } from '../acoustics/dsp';
 import type { AudioRing } from '../acoustics/history';
 import { FS, N_HARM, REF_PA } from '../acoustics/model';
 import type { DetectSpan } from '../lora/types';
-import { drawDetectionMarks, drawLevelStrip, type LevelSample } from '../ui/detectMarks';
-import { BandTracer, MAX_TRACKS } from './bandTrace';
+import { drawDetectionMarks, drawLevelStrip, pitchTrace, type LevelSample } from '../ui/detectMarks';
 
 // Spectrogram and band-level history for one mic, read from the sim's audio rings. Costs the sim nothing.
 export const WF_N = 1024;
@@ -120,9 +119,6 @@ export class MicAnalysis {
   private readonly cols = new Uint8Array(WF_COLS * WF_BINS);
   // Truth lines per column: for each drone, the received rotor frequencies.
   private readonly truth: (number[][] | null)[] = new Array<number[][] | null>(WF_COLS).fill(null);
-  // The traced harmonics per column in Hz, MAX_TRACKS per column, 0 with no lock.
-  private readonly trace = new Float32Array(WF_COLS * MAX_TRACKS);
-  private tracer = new BandTracer(WF_BINS, FS / WF_N);
   private readonly bands = new Float64Array(LEVEL_COLS);
   private readonly frame = new Float32Array(WF_N);
   private readonly win = new Float32Array(LEVEL_WIN);
@@ -138,15 +134,13 @@ export class MicAnalysis {
 
   constructor(readonly key: string) {}
 
-  // tracing says whether to follow the drone's band. The tracer is the costly part, and its line only shows during a
-  // detection, so quiet nodes skip it.
-  update(ring: AudioRing, truth: number[][] | null, tracing = false): void {
+  update(ring: AudioRing, truth: number[][] | null): void {
     if (ring !== this.ring) this.restart(ring);
     const end = ring.written;
     if (end - this.wfCursor > ring.capacity) this.wfCursor = end - WF_HOP * 4;
     if (end - this.levelCursor > ring.capacity) this.levelCursor = end - LEVEL_WIN * 4;
     for (let budget = 100; budget > 0 && this.wfCursor + WF_N <= end; budget--) {
-      this.column(ring, truth, tracing);
+      this.column(ring, truth);
       this.wfCursor += WF_HOP;
     }
     for (let budget = 40; budget > 0 && this.levelCursor + LEVEL_WIN <= end; budget--) {
@@ -203,27 +197,19 @@ export class MicAnalysis {
 
   // The detector's debug lines over the columns drawStrip or drawWaterfall just drew. nowS is the sim time of the
   // newest audio; the newest column is centred a little before it.
-  drawMarks(canvas: HTMLCanvasElement, spans: DetectSpan[], nowS: number): void {
+  drawMarks(canvas: HTMLCanvasElement, spans: DetectSpan[], samples: LevelSample[], nowS: number): void {
     const ctx = canvas.getContext('2d');
     if (!ctx || !this.ring || this.colCount === 0) return;
     const centre = this.wfCursor - WF_HOP + WF_N / 2;
     const w = Math.min(canvas.width, WF_COLS);
-    const traces: number[][] = [];
-    for (let i = 0; i < MAX_TRACKS; i++) {
-      const trace = new Array<number>(w);
-      for (let c = 0; c < w; c++) {
-        const seq = this.colCount - w + c;
-        trace[c] = seq < 0 ? 0 : this.trace[(seq % WF_COLS) * MAX_TRACKS + i];
-      }
-      traces.push(trace);
-    }
+    const tNewest = nowS - (this.ring.written - centre) / FS;
     drawDetectionMarks(ctx, w, canvas.height, {
       maxHz: FS / 2,
       lineWidth: 2,
       spans,
-      tNewest: nowS - (this.ring.written - centre) / FS,
+      tNewest,
       secPerCol: WF_HOP / FS,
-      traces,
+      traces: [pitchTrace(samples, tNewest, w, WF_HOP / FS)],
     });
   }
 
@@ -284,7 +270,6 @@ export class MicAnalysis {
 
   private restart(ring: AudioRing): void {
     this.ring = ring;
-    this.tracer = new BandTracer(WF_BINS, FS / WF_N);
     this.colCount = 0;
     this.levelCount = 0;
     const end = ring.written;
@@ -292,7 +277,7 @@ export class MicAnalysis {
     this.levelCursor = Math.max(0, end - Math.min(ring.capacity, LEVEL_WIN * LEVEL_COLS));
   }
 
-  private column(ring: AudioRing, truth: number[][] | null, tracing: boolean): void {
+  private column(ring: AudioRing, truth: number[][] | null): void {
     if (!ring.read(this.wfCursor, this.frame)) return;
     for (let i = 0; i < WF_N; i++) {
       this.re[i] = this.frame[i] * WIN[i];
@@ -308,12 +293,6 @@ export class MicAnalysis {
       this.cols[base + k] = Math.round(255 * Math.min(1, Math.max(0, (db - DB_LO) / (DB_HI - DB_LO))));
     }
     this.truth[slot] = truth;
-    if (tracing) {
-      this.trace.set(this.tracer.push(this.cols.subarray(base, base + WF_BINS)), slot * MAX_TRACKS);
-    } else {
-      this.tracer.reset();
-      this.trace.fill(0, slot * MAX_TRACKS, (slot + 1) * MAX_TRACKS);
-    }
     this.colCount++;
   }
 

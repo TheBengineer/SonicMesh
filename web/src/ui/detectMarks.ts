@@ -1,9 +1,9 @@
 import type { DetectSpan, DetectState } from '../lora/types';
-import { DETECTION_THRESHOLD_DB } from '../lora/nodeStub';
+import { COMB_HI_HZ, COMB_LO_HZ, DEFAULT_COMB_PARAMS, NODE_COMB_PARAMS } from '../detector/comb';
 
-// The band the detector adds up, the same one the band level uses.
-export const BAND_LO_HZ = 100;
-export const BAND_HI_HZ = 4000;
+// The band the detector searches.
+export const BAND_LO_HZ = COMB_LO_HZ;
+export const BAND_HI_HZ = COMB_HI_HZ;
 
 const SPAN_EDGE = '#5fb4ff';
 const LINE_COLOR = '#3ddc84';
@@ -11,23 +11,24 @@ const TRACE_EDGE = 'rgba(0, 0, 0, 0.7)';
 const BAND_COLOR = 'rgba(255, 255, 255, 0.6)';
 
 // The meter stretches the low end, or the threshold would be lost next to a close pass: the threshold sits a quarter of
-// the way up and METER_TOP_DB fills it.
+// the way up and METER_TOP fills it.
 export const METER_TICK = 0.25;
-const METER_TOP_DB = 20;
+const METER_TOP = 0.8;
 
-export function meterFraction(marginDb: number): number {
-  if (marginDb <= 0) return 0;
-  if (marginDb <= DETECTION_THRESHOLD_DB) return (marginDb / DETECTION_THRESHOLD_DB) * METER_TICK;
-  const above = (marginDb - DETECTION_THRESHOLD_DB) / (METER_TOP_DB - DETECTION_THRESHOLD_DB);
-  return Math.min(1, METER_TICK + above * (1 - METER_TICK));
+export function meterFraction(peak: number): number {
+  const theta = NODE_COMB_PARAMS.theta ?? DEFAULT_COMB_PARAMS.theta;
+  if (peak <= 0) return 0;
+  if (peak <= theta) return (peak / theta) * METER_TICK;
+  return Math.min(1, METER_TICK + ((peak - theta) / (METER_TOP - theta)) * (1 - METER_TICK));
 }
 
 export const STATE_COLOR: Record<DetectState, string> = { quiet: '#6b7785', arming: '#ffb347', detecting: '#ff4d6d' };
 
 export interface LevelSample {
   t: number;
-  marginDb: number;
+  peak: number;
   state: DetectState;
+  trackHz: number;
 }
 
 // A node's recent level and state, taken from the frames the sim sends. It restarts when sim time goes back.
@@ -42,11 +43,26 @@ export class LevelHistory {
     else if (last && sample.t - last.t < LevelHistory.STEP_S) {
       // Keep the latest state, so a change between samples is not lost.
       if (sample.state !== 'quiet') last.state = sample.state;
+      if (sample.trackHz > 0) last.trackHz = sample.trackHz;
       return;
     }
     this.samples.push({ ...sample });
     if (this.samples.length > LevelHistory.MAX) this.samples.shift();
   }
+}
+
+// The detector's pitch per column of a plot `cols` wide, newest on the right, 0 where there is none. A sample holds until
+// the next one, since a column is shorter than a sample.
+export function pitchTrace(samples: LevelSample[], tNewest: number, cols: number, secPerCol: number): Float32Array {
+  const out = new Float32Array(cols);
+  samples.forEach((s, i) => {
+    if (s.trackHz <= 0) return;
+    const end = samples[i + 1]?.t ?? tNewest;
+    const a = Math.max(0, Math.ceil(cols - 1 - (tNewest - s.t) / secPerCol));
+    const b = Math.min(cols - 1, Math.floor(cols - 1 - (tNewest - end) / secPerCol));
+    for (let c = a; c <= b; c++) out[c] = s.trackHz;
+  });
+  return out;
 }
 
 // One row of colour per sample, on the same time axis as the waterfall above it. Brighter is louder.
@@ -64,7 +80,7 @@ export function drawLevelStrip(canvas: HTMLCanvasElement, samples: LevelSample[]
     const a = x(s.t);
     const b = x(end);
     if (b < 0 || a > cols) return;
-    ctx.globalAlpha = 0.35 + 0.65 * meterFraction(s.marginDb);
+    ctx.globalAlpha = 0.35 + 0.65 * meterFraction(s.peak);
     ctx.fillStyle = STATE_COLOR[s.state];
     ctx.fillRect(a, 0, Math.max(1, b - a), 1);
   });
@@ -80,7 +96,7 @@ export interface MarkLayout {
   secPerCol: number;
   // Draws only the reported line and the band edges, for a plot too short to show a span's ends.
   lineOnly?: boolean;
-  // One trace per drone: Hz per column, 0 where no band is locked. Drawn only while the node detects.
+  // The detector's pitch: Hz per column, 0 where it has none. Drawn only while the node detects.
   traces?: ArrayLike<number>[];
 }
 

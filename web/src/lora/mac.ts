@@ -25,7 +25,10 @@ import {
   type Vec3,
   type Wave,
 } from './channel';
-import { EARSHOT_M, NodeStub, RANGING_MAX_LINK_M, measureRange, type Detection, type HealthValue, type NodeObservation, type TruthTarget } from './nodeStub';
+import { BogieTracker, type Bogie } from './bogies';
+import { ARRAY_OFFSETS } from '../acoustics/engine';
+import { ARRAY_HALF_M } from '../acoustics/model';
+import { NodeStub, RANGING_MAX_LINK_M, pitchFits, measureRange, type Detection, type HealthValue, type RingView, type NodeObservation, type TruthTarget } from './nodeStub';
 import type { GatewayView, GridSlot, HealthView, LoraView, MessageView, NodeView, PacketView, RangingView, RxView } from './types';
 
 export const IDLE_SUPERFRAME_S = 4;
@@ -72,6 +75,20 @@ export interface NetworkOptions {
   terrain: TerrainLike;
   ambientDb?: number;
 }
+
+// What the network reads from the acoustic engine.
+interface EngineView {
+  micRing(key: string): RingView | undefined;
+  hasDrone(id: number): boolean;
+  truthBpf(id: number, key: string, t: number): number[];
+  bandLevel(key: string): number;
+  audioSnippet(key: string, max: number): Float32Array | null;
+  ambientDb(): number;
+}
+
+const PITCH_LOOKBACK_S = 0.2;
+const BOGIE_PERIOD_TICKS = 25;
+const MIC_OFFSETS = ARRAY_OFFSETS.map(([a, b]) => [a * ARRAY_HALF_M, b * ARRAY_HALF_M] as const);
 
 interface PendingAlert {
   detection: Detection;
@@ -175,6 +192,8 @@ export class LoRaNetwork {
   private gatewayPos: Vec2;
   private readonly ambientDb: number;
   private nodes: NetNode[] = [];
+  private readonly bogieTracker = new BogieTracker();
+  private bogies: Bogie[] = [];
   private truth: TruthTarget[] = [];
   private mode: 'idle' | 'event' = 'idle';
   private superframe = 0;
@@ -318,15 +337,51 @@ export class LoRaNetwork {
     if (obs.audio) node.lastAudio = obs.audio;
   }
 
-  observeFromEngine(world: World, engine: { hasMic(key: string): boolean; bandLevel(key: string): number; audioSnippet(key: string, max: number): Float32Array | null; ambientDb(): number }): void {
+  observeFromEngine(world: World, engine: EngineView): void {
     // Band levels are 100 ms windows, so refresh them (and the snippet audio) once per 10 ticks, not every tick.
-    if (Math.round(this.nowS * 100) % 10 !== 0) return;
+    const refresh = Math.round(this.nowS * 100) % 10 === 0;
     for (const n of world.state.nodes) {
       const key = `${n.id}.0`;
-      if (!engine.hasMic(key)) continue;
-      const audio = engine.audioSnippet(key, 7680);
-      this.observe(n.id, { bandDb: engine.bandLevel(key), ambientDb: engine.ambientDb(), audio: audio ?? undefined });
+      const node = this.node(n.id);
+      const ring = engine.micRing(key);
+      if (!node || !ring) continue;
+      const comb = node.stub.hear(ring);
+      if (node.spec.kind === 'array') {
+        const rings = ARRAY_OFFSETS.map((_, j) => engine.micRing(`${n.id}.${j}`)).filter((r) => r !== undefined);
+        node.stub.listenForBearing(this.nowS, rings, MIC_OFFSETS);
+      }
+      const heardId = comb.on && comb.f0Hz > 0 ? this.droneAtPitch(comb.f0Hz, node, key, engine) : null;
+      const audio = refresh ? engine.audioSnippet(key, 7680) : null;
+      this.observe(n.id, {
+        bandDb: refresh ? engine.bandLevel(key) : node.lastObs.bandDb,
+        ambientDb: engine.ambientDb(),
+        comb,
+        heardId,
+        audio: audio ?? undefined,
+      });
     }
+  }
+
+  // The nearest drone the detector's pitch fits, from the true rotor speeds at this mic. Nothing here feeds the bogies or
+  // the bearings: it only draws the lines in the Truth view and fills the stand-in class, and a detection that fits none
+  // names none.
+  // The rotors are read a little back in time so the delay solve stays inside the logged poses.
+  private droneAtPitch(f0Hz: number, node: NetNode, key: string, engine: EngineView): number | null {
+    const at = this.nowS - PITCH_LOOKBACK_S;
+    if (at <= 0) return null;
+    let best: number | null = null;
+    let bestD = Infinity;
+    for (const t of this.truth) {
+      if (!engine.hasDrone(t.id)) continue;
+      const rotors = engine.truthBpf(t.id, key, at);
+      if (!pitchFits(f0Hz, rotors.reduce((a, b) => a + b, 0) / rotors.length)) continue;
+      const d = Math.hypot(t.x - node.spec.x, t.y - node.spec.y);
+      if (d < bestD) {
+        best = t.id;
+        bestD = d;
+      }
+    }
+    return best;
   }
 
   // Advances to the absolute sim time tS. Superframes run at their exact internal times.
@@ -340,6 +395,7 @@ export class LoRaNetwork {
         node.pendingAlert = { detection: this.detectionFor(node) };
       }
     }
+    if (Math.round(tS * 100) % BOGIE_PERIOD_TICKS === 0) this.updateBogies(tS);
     // A long jump may cross several superframes; process them in order.
     while (this.nextSfStart <= tS + 1e-9) this.runSuperframe(this.nextSfStart);
   }
@@ -348,43 +404,19 @@ export class LoRaNetwork {
     return this.nodes.find((n) => n.spec.id === id);
   }
 
-  // Every drone in earshot of a node, nearest first. A detecting node always names at least the nearest drone.
-  private targetsOf(node: NetNode): number[] {
-    const near = this.truth
-      .map((t) => ({ t, d: Math.hypot(t.x - node.spec.x, t.y - node.spec.y) }))
-      .filter(({ t, d }) => d <= EARSHOT_M[t.class])
-      .sort((a, b) => a.d - b.d)
-      .map(({ t }) => t.id);
-    if (near.length > 0) return near;
-    const nearest = this.nearestTruth(node);
-    return nearest ? [nearest.id] : [];
+  private updateBogies(tS: number): void {
+    const reports = this.nodes
+      .filter((n) => n.stub.detecting && n.stub.pitchHz > 0)
+      .map((n) => ({ id: n.spec.id, x: n.spec.x, y: n.spec.y, pitchHz: n.stub.pitchHz, bearingDeg: n.stub.bearingDeg, bearingSigmaDeg: n.stub.bearingSigmaDeg }));
+    this.bogies = this.bogieTracker.update(tS, reports);
   }
 
-  private nearestTruth(node: NetNode): TruthTarget | null {
-    let best: TruthTarget | null = null;
-    let bestD = Infinity;
-    for (const t of this.truth) {
-      const d = Math.hypot(t.x - node.spec.x, t.y - node.spec.y);
-      if (d < bestD) {
-        bestD = d;
-        best = t;
-      }
-    }
-    return best;
+  private targetOf(node: NetNode): TruthTarget | null {
+    return this.truth.find((t) => t.id === node.stub.targetId) ?? null;
   }
 
   private detectionFor(node: NetNode): Detection {
-    const target: TruthTarget =
-      this.nearestTruth(node) ??
-      ({
-        id: 0,
-        class: 'mini' as DroneClass,
-        x: node.spec.x + 80,
-        y: node.spec.y + 20,
-        alt: 40,
-      } satisfies TruthTarget);
-    const z = this.terrain.height(node.spec.x, node.spec.y) + NODE_ANT_M;
-    return node.stub.detection(this.nowS, target, node.spec.x, node.spec.y, z);
+    return node.stub.detection(this.targetOf(node));
   }
 
   private position(id: number): Vec3 {
@@ -859,11 +891,14 @@ export class LoRaNetwork {
       id: node.spec.id,
       kind: node.spec.kind,
       detecting: node.stub.detecting,
-      targetIds: node.stub.detecting ? this.targetsOf(node) : [],
+      targetIds: node.stub.targetId === null ? [] : [node.stub.targetId],
+      trackHz: node.stub.trackHz,
+      pitchHz: node.stub.pitchHz,
+      bearingDeg: node.stub.bearingDeg,
       beaconHeard: node.beaconHeard,
       lastDetectionS: node.stub.lastDetectionS,
       detectSpans: node.stub.spans.map((s) => ({ ...s })),
-      marginDb: node.stub.marginDb,
+      peak: node.stub.peak,
       detectState: node.stub.state,
       detections: node.stub.detections,
       queue: node.stub.queue,
@@ -915,6 +950,7 @@ export class LoRaNetwork {
       eventLastS: this.eventLastS,
       packets: this.packets,
       nodes: this.nodes.map((n) => this.nodeView(n)),
+      bogies: this.bogies,
       gateway: this.gatewayView(),
       grid: this.grid,
     };

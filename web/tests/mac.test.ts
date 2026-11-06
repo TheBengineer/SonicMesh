@@ -9,6 +9,9 @@ import { hashWorld } from '../src/sim/world';
 import { airtime } from '../src/lora/channel';
 import { LoRaNetwork, alertContention } from '../src/lora/mac';
 
+const HEARD = { bandDb: 72, ambientDb: 40, comb: { on: true, tracking: true, f0Hz: 250, peak: 0.3 } };
+const QUIET = { bandDb: 40, ambientDb: 40, comb: { on: false, tracking: false, f0Hz: 0, peak: 0 } };
+
 const scenario = parseScenario(exampleScenario);
 const terrain = new Terrain(scenario.seed, scenario.terrain);
 
@@ -53,7 +56,7 @@ describe('LoRa MAC and schedule', () => {
     expect(view.packets.some((p) => p.type === 'RANGING_RESULT')).toBe(true);
   });
 
-  it('a detecting node names the drones in earshot, nearest first, and none once it stops detecting', () => {
+  it('a detecting node names the drone its pitch fits, and none once it stops detecting', () => {
     const net = network(scenario.nodes);
     const node = scenario.nodes.find((n) => n.id === 6)!;
     net.setTruth([
@@ -64,37 +67,74 @@ describe('LoRa MAC and schedule', () => {
     expect(view().targetIds).toEqual([]);
     let seen: number[] = [];
     runSeconds(net, 20, (n, t) => {
-      n.observe(6, { bandDb: t <= 5 ? 72 : 40, ambientDb: 40 });
+      n.observe(6, t <= 5 ? { ...HEARD, heardId: 2 } : QUIET);
       if (view().detecting) seen = view().targetIds;
     });
     expect(seen).toEqual([2]);
     expect(view().detecting).toBe(false);
     expect(view().targetIds).toEqual([]);
-
-    const crowded = network(scenario.nodes);
-    crowded.setTruth([
-      { id: 1, class: 'fpv', x: node.x + 200, y: node.y, alt: 40 },
-      { id: 2, class: 'mini', x: node.x + 50, y: node.y, alt: 40 },
-      { id: 3, class: 'matrice', x: node.x + 300, y: node.y, alt: 40 },
-    ]);
-    runSeconds(crowded, 3, (n) => n.observe(6, { bandDb: 72, ambientDb: 40 }));
-    expect(crowded.snapshot().nodes.find((v) => v.id === 6)?.targetIds).toEqual([2, 1]);
   });
 
-  it('in the example, a node picks up more than one drone at a time', () => {
-    const scn = parseScenario(exampleScenario);
+  it('a detection that fits no drone draws nothing', () => {
+    const net = network(scenario.nodes);
+    const node = scenario.nodes.find((n) => n.id === 9)!;
+    net.setTruth([{ id: 1, class: 'mini', x: node.x + 20, y: node.y, alt: 40 }]);
+    runSeconds(net, 2, (n) => n.observe(9, { ...HEARD, heardId: null }));
+    const view = net.snapshot().nodes.find((v) => v.id === 9)!;
+    expect(view.detecting).toBe(true);
+    expect(view.targetIds).toEqual([]);
+    expect(view.bearingDeg).toBeNull();
+    expect(view.pitchHz).toBe(250);
+  });
+
+  it('in the example, array bearings point near the drone with no truth going in', () => {
+    const scn = parseScenario({ ...exampleScenario, drones: exampleScenario.drones.slice(0, 1) });
     const runner = new Runner(scn);
-    const engine = new AcousticEngine(scn, runner.world.terrain, { ringSeconds: 25 });
+    const engine = new AcousticEngine(scn, runner.world.terrain, { ringSeconds: 3 });
     engine.start(runner.world);
-    const most = new Map<number, number>();
-    for (let i = 0; i < 4000; i++) {
+    const errors: number[] = [];
+    for (let i = 0; i < 5000; i++) {
       runner.stepTick();
       engine.tick(runner.world);
       runner.lora.observeFromEngine(runner.world, engine);
       if (i % 50 !== 0) continue;
-      for (const n of runner.lora.snapshot().nodes) most.set(n.id, Math.max(most.get(n.id) ?? 0, n.targetIds.length));
+      const d = runner.world.state.drones[0];
+      for (const v of runner.lora.snapshot().nodes) {
+        const n = scn.nodes.find((o) => o.id === v.id)!;
+        if (v.kind !== 'array') expect(v.bearingDeg).toBeNull();
+        if (v.bearingDeg === null || Math.hypot(d.x - n.x, d.y - n.y) > 300) continue;
+        const az = (Math.atan2(d.x - n.x, d.y - n.y) * 180) / Math.PI;
+        errors.push(Math.abs(((v.bearingDeg - az + 540) % 360) - 180));
+      }
     }
-    expect(most.get(7)).toBe(3);
+    errors.sort((a, b) => a - b);
+    expect(errors.length).toBeGreaterThan(20);
+    expect(errors[errors.length >> 1]).toBeLessThan(10);
+  }, 120_000);
+
+  it('groups neighbours with matching pitches into bogies, without naming drones', () => {
+    const net = network(scenario.nodes);
+    net.setTruth([]);
+    const reading = (f0Hz: number) => ({ bandDb: 72, ambientDb: 40, comb: { on: true, tracking: true, f0Hz, peak: 0.3 } });
+    runSeconds(net, 2, (n) => {
+      n.observe(6, reading(600));
+      n.observe(7, reading(610));
+      n.observe(8, reading(250));
+    });
+    expect(net.snapshot().bogies.map((b) => b.nodeIds)).toEqual([[6, 7], [8]]);
+  });
+
+  it('in the example with no drones, nothing is detected', () => {
+    const scn = parseScenario({ ...exampleScenario, drones: [] });
+    const runner = new Runner(scn);
+    const engine = new AcousticEngine(scn, runner.world.terrain, { ringSeconds: 3 });
+    engine.start(runner.world);
+    for (let i = 0; i < 3000; i++) {
+      runner.stepTick();
+      engine.tick(runner.world);
+      runner.lora.observeFromEngine(runner.world, engine);
+    }
+    for (const n of runner.lora.snapshot().nodes) expect(n.detections, `node ${n.id}`).toBe(0);
   }, 120_000);
 
   it('a detection switches to event, pauses health and ranging, and returns to idle after 10 s', () => {
@@ -104,7 +144,7 @@ describe('LoRa MAC and schedule', () => {
     let firstDetection = -1;
     runSeconds(net, 40, (n, t) => {
       const high = t >= start && t <= stop;
-      for (const id of [6, 7, 8]) n.observe(id, { bandDb: high ? 72 : 40, ambientDb: 40 });
+      for (const id of [6, 7, 8]) n.observe(id, high ? HEARD : QUIET);
       if (high && firstDetection < 0 && n.snapshot().nodes.find((v) => v.id === 6)?.detecting) firstDetection = t;
     });
 
@@ -153,8 +193,11 @@ describe('LoRa MAC and schedule', () => {
         const snap = runner.lora.snapshot();
         for (const p of snap.packets) types.add(p.type);
         for (const n of snap.nodes) {
-          expect(n.targetIds).toEqual(n.detecting ? [droneId] : []);
-          if (n.detecting) linked++;
+          if (!n.detecting) expect(n.targetIds).toEqual([]);
+          if (n.targetIds.length > 0) {
+            expect(n.targetIds).toEqual([droneId]);
+            linked++;
+          }
         }
       }
     }
@@ -162,8 +205,9 @@ describe('LoRa MAC and schedule', () => {
     for (const type of ['BEACON', 'RANGING_RESULT', 'DETECT_START', 'DETECT', 'SNIPPET']) {
       expect(types.has(type), `example run sent ${type}`).toBe(true);
     }
-    // one crossing, one event: idle -> event -> idle (a stale alert once restarted it)
-    expect(runner.lora.changes.map((c) => c.mode)).toEqual(['event', 'idle']);
+    // One event, not restarted by a stale alert. The drone parks at the end of its path and stays audible, so the event
+    // lasts; the return to idle has its own test above.
+    expect(runner.lora.changes.map((c) => c.mode)).toEqual(['event']);
     expect(maxBand - ambient).toBeGreaterThan(6);
   }, 120_000);
 
@@ -221,7 +265,7 @@ describe('LoRa MAC and schedule', () => {
         r.stepTick();
         const t = r.simTimeS;
         const high = t >= 2 && t <= 12;
-        for (const id of [6, 7, 8]) r.lora.observe(id, { bandDb: high ? 72 : 40, ambientDb: 40 });
+        for (const id of [6, 7, 8]) r.lora.observe(id, high ? HEARD : QUIET);
         if (r.tick % 100 === 0) hashes.push(hashWorld(r.world));
       }
       return hashes;

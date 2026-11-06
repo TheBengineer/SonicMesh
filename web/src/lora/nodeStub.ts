@@ -1,29 +1,48 @@
-// STUB node behaviour for M3. The detector core lands in M2; what it reports here is a clearly
-// labelled stand-in. Framing, scheduling, collisions and reception are the real v0 design.
+// Node behaviour for M3. Detection is the comb detector ported from sim/detector and bearings come from the array's own
+// mics; class and confidence are still a clearly labelled stand-in. Framing, scheduling, collisions and reception are the real v0 design.
 import { createRng, nextFloat, nextU32, type Rng } from '../sim/rng';
 import type { DroneClass } from '../sim/scenario';
 import { gauss } from '../acoustics/dsp';
+import { BEARING_SAMPLES, BearingTrack, estimateBearing } from '../detector/bearing';
+import { CombDetector, NODE_COMB_PARAMS } from '../detector/comb';
 import { HEALTH_FIELDS } from '../protocol/messages';
 import type { DetectSpan, DetectState } from './types';
 
-// Above the demo background, whose 100 ms band level peaked 1.4 dB over the ambient in 600 s across 13 nodes. That
-// background is steady noise only: no wind or sound events, so a real site would need a higher threshold.
-export const DETECTION_THRESHOLD_DB = 2;
-export const DETECTION_RELEASE_DB = 1;
-export const DETECTION_HOLD_S = 0.5;
+// A detection keeps naming its drone this long after the pitch last matched it. The pitch drops out while the detector
+// holds on, and wanders onto noise for single frames.
+export const TARGET_HOLD_S = 1;
+// How often an array node takes a new bearing.
+export const BEARING_PERIOD_S = 0.5;
+// Readings behind a node's steady pitch, one per tick: about a second, so single-frame jumps do not move it.
+const PITCH_WINDOW = 100;
 // Spans kept for the debug lines; the waterfalls show well under a minute.
 export const MAX_DETECT_SPANS = 8;
-// How far off the stub names a drone, from the first detection range of each class at the 2 dB threshold.
-export const EARSHOT_M: Record<DroneClass, number> = { fpv: 224, mini: 168, matrice: 165 };
 export const RANGE_SIGMA_M = 4;
 export const NLOS_P = 0.25;
 export const NLOS_MAX_M = 12;
 export const RANGING_SPACING_M = 120;
 export const RANGING_MAX_LINK_M = 2.2 * RANGING_SPACING_M;
 
+export interface RingView {
+  written: number;
+  capacity: number;
+  read(start: number, out: Float32Array): boolean;
+}
+
+// What the comb detector says at the latest frame.
+export interface CombReading {
+  on: boolean;
+  tracking: boolean;
+  f0Hz: number;
+  peak: number;
+}
+
 export interface NodeObservation {
   bandDb: number;
   ambientDb: number;
+  comb?: CombReading;
+  // The drone whose true rotor pitch matches the detector's, if any.
+  heardId?: number | null;
   beaconRssi?: number;
   beaconSnr?: number;
   neighboursHeard?: number;
@@ -47,7 +66,6 @@ export interface Detection {
   bearingSigma: number;
   lineHz: number;
   line2Delta: number;
-  target: TruthTarget;
 }
 
 export interface HealthValue {
@@ -61,10 +79,17 @@ export interface HealthValue {
 }
 
 const CLASS_CODE: Record<DroneClass, number> = { fpv: 1, mini: 2, matrice: 3 };
-const CLASS_BPF: Record<DroneClass, number> = { fpv: 600, mini: 250, matrice: 100 };
 
 function clamp(v: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, v));
+}
+
+// Whether a detector pitch fits a drone's true blade-pass frequency: the fundamental, a sub-harmonic the detector's
+// octave rule took, or a harmonic of it. The Doppler shift is already in bpfHz.
+export function pitchFits(f0Hz: number, bpfHz: number): boolean {
+  const r = f0Hz / bpfHz;
+  if (Math.abs(r - 1) < 0.06) return true;
+  return [1 / 2, 1 / 3, 1 / 4, 2, 3, 4, 5, 6].some((m) => Math.abs(r / m - 1) < 0.04);
 }
 
 function hash(seed: number, a: number, b: number, sweep: number): number {
@@ -131,9 +156,17 @@ export class EnergyModel {
 export class NodeStub {
   readonly energy = new EnergyModel();
   private readonly rng: Rng;
-  private aboveSince = -1;
-  private belowSince = -1;
-  private latched = false;
+  private readonly comb = new CombDetector(NODE_COMB_PARAMS);
+  private readonly frame = new Float32Array(this.comb.nFft);
+  private cursor = 0;
+  private targetAt = -1;
+  private bearingAt = -Infinity;
+  private readonly bearings = new BearingTrack();
+  private bearingFrames: Float32Array[] | null = null;
+  private elDeg = 0;
+  private tracking = false;
+  private lastF0 = 0;
+  private readonly pitches: number[] = [];
   detecting = false;
   detections = 0;
   rejected = 0;
@@ -143,8 +176,11 @@ export class NodeStub {
   lastDetectionS = -1;
   readonly spans: DetectSpan[] = [];
   lastBandDb = 0;
-  marginDb = 0;
+  // The best comb score this frame, which the detector compares with its threshold.
+  peak = 0;
   minBandDb = 255;
+  // The drone this detection's pitch fits, from truth. Only class and the Truth view use it.
+  targetId: number | null = null;
 
   constructor(
     readonly id: number,
@@ -158,69 +194,110 @@ export class NodeStub {
     this.energy.step(0.01);
     this.lastBandDb = obs.bandDb;
     this.minBandDb = Math.min(this.minBandDb, obs.bandDb);
-    const margin = obs.bandDb - obs.ambientDb;
-    this.marginDb = margin;
-    if (this.latched) {
-      // A detection ends only after the level stays low, so a level near the threshold does not flicker.
-      if (margin >= DETECTION_RELEASE_DB) {
-        this.belowSince = -1;
-      } else {
-        if (this.belowSince < 0) this.belowSince = t;
-        if (t - this.belowSince >= DETECTION_HOLD_S) {
-          this.belowSince = -1;
-          this.aboveSince = -1;
-          this.latched = false;
-          this.detecting = false;
-          const span = this.spans.at(-1);
-          if (span) span.endS = t;
-        }
-      }
-    } else if (margin >= DETECTION_THRESHOLD_DB) {
-      if (this.aboveSince < 0) this.aboveSince = t;
-      if (t - this.aboveSince >= DETECTION_HOLD_S) {
-        this.latched = true;
-        this.detecting = true;
-        this.detections++;
-        this.lastDetectionS = t;
-        this.spans.push({ startS: t, endS: null, lineHz: null });
-        if (this.spans.length > MAX_DETECT_SPANS) this.spans.shift();
-      }
-    } else {
-      this.aboveSince = -1;
+    const comb = obs.comb;
+    const on = comb?.on ?? false;
+    this.peak = comb?.peak ?? 0;
+    this.tracking = comb?.tracking ?? false;
+    if (on && !this.detecting) {
+      this.detecting = true;
+      this.detections++;
+      this.lastDetectionS = t;
+      this.spans.push({ startS: t, endS: null, lineHz: null });
+      if (this.spans.length > MAX_DETECT_SPANS) this.spans.shift();
+    } else if (!on && this.detecting) {
+      this.detecting = false;
+      this.lastF0 = 0;
+      this.pitches.length = 0;
+      this.bearings.reset();
+      this.bearingAt = -Infinity;
+      const span = this.spans.at(-1);
+      if (span) span.endS = t;
     }
-    return this.detecting && this.lastDetectionS === t ? null : null;
+    if (this.detecting && comb && comb.f0Hz > 0) {
+      this.lastF0 = comb.f0Hz;
+      this.pitches.push(comb.f0Hz);
+      if (this.pitches.length > PITCH_WINDOW) this.pitches.shift();
+      const span = this.spans.at(-1);
+      if (span) span.lineHz = clamp(Math.round(comb.f0Hz), 0, 2047);
+    }
+    if (this.detecting && obs.heardId !== undefined && obs.heardId !== null) {
+      this.targetId = obs.heardId;
+      this.targetAt = t;
+    } else if (!this.detecting || t - this.targetAt > TARGET_HOLD_S) {
+      this.targetId = null;
+    }
+    return null;
+  }
+
+  // Runs the detector over any new audio, one frame per hop from the start of the mic's ring.
+  hear(ring: RingView): CombReading {
+    const { comb, frame } = this;
+    if (ring.written - this.cursor > ring.capacity) this.cursor = ring.written - comb.nFft;
+    while (this.cursor + comb.nFft <= ring.written && ring.read(this.cursor, frame)) {
+      comb.step(frame);
+      this.cursor += comb.hop;
+    }
+    return { on: comb.on, tracking: comb.q > 0, f0Hz: comb.f0Hz, peak: comb.peak };
   }
 
   get state(): DetectState {
     if (this.detecting) return 'detecting';
-    return this.aboveSince >= 0 ? 'arming' : 'quiet';
+    return this.tracking ? 'arming' : 'quiet';
   }
 
-  // Detection fields from truth with noise. Array nodes get a bearing; detector nodes report 0.
-  detection(_t: number, target: TruthTarget, ownX: number, ownY: number, ownZ: number): Detection {
-    const dx = target.x - ownX;
-    const dy = target.y - ownY;
-    const dz = target.alt - ownZ;
-    const trueAz = ((Math.atan2(dx, dy) * 180) / Math.PI + 360) % 360;
-    const trueEl = (Math.atan2(dz, Math.hypot(dx, dy)) * 180) / Math.PI;
-    const az = this.kind === 'array' ? (trueAz + gauss(this.rng) * 5 + 360) % 360 : 0;
-    const el = clamp(trueEl + (this.kind === 'array' ? gauss(this.rng) * 2 : 0), 0, 31);
+  // The pitch on the waterfall: the detector's own, while it detects.
+  get trackHz(): number {
+    return this.detecting ? this.lastF0 : 0;
+  }
+
+  // The median pitch over the last second of a detection, which the map labels and bogies use. 0 before the first.
+  get pitchHz(): number {
+    if (!this.detecting || this.pitches.length === 0) return 0;
+    const sorted = [...this.pitches].sort((a, b) => a - b);
+    return sorted[sorted.length >> 1];
+  }
+
+  // An array node's bearing: taken from its own mics while it detects, at the detector's pitch.
+  listenForBearing(t: number, rings: RingView[], offsets: readonly (readonly [number, number])[]): void {
+    if (this.kind !== 'array' || !this.detecting || t - this.bearingAt < BEARING_PERIOD_S) return;
+    const f0 = this.pitchHz;
+    if (f0 <= 0 || rings.length !== offsets.length) return;
+    this.bearingFrames ??= offsets.map(() => new Float32Array(BEARING_SAMPLES));
+    const frames = this.bearingFrames;
+    if (!rings.every((r, j) => r.written >= BEARING_SAMPLES && r.read(r.written - BEARING_SAMPLES, frames[j]))) return;
+    this.bearingAt = t;
+    const found = estimateBearing(frames, offsets, f0);
+    if (!found) return;
+    this.bearings.push(found.azDeg);
+    this.elDeg = found.elDeg;
+  }
+
+  // What the array will claim, null when it has no bearing or its estimates disagree.
+  get bearingDeg(): number | null {
+    return this.detecting ? this.bearings.bearingDeg : null;
+  }
+
+  get bearingSigmaDeg(): number | null {
+    return this.bearingDeg === null ? null : this.bearings.spreadDeg;
+  }
+
+  // Detection fields. Pitch and bearing are measured. Confidence and the second line are still stand-ins, and class comes
+  // from the drone the pitch fits, so it is 0 when none does.
+  detection(target: TruthTarget | null): Detection {
     const snr = this.neighboursHeard >= 0 ? 12 : 0;
     const confidence = clamp(Math.round(4 + snr * 0.6), 0, 15);
     const level = clamp(Math.round(this.lastBandDb), 0, 63);
-    const line = CLASS_BPF[target.class] + gauss(this.rng) * 4;
-    const span = this.spans.at(-1);
-    if (span && span.endS === null) span.lineHz = clamp(Math.round(line), 0, 2047);
+    const az = this.bearingDeg;
+    const sigma = this.bearingSigmaDeg;
     return {
       confidence,
       levelDb: level,
-      cls: CLASS_CODE[target.class],
-      az: Math.round(az) & 511,
-      el: Math.round(el) & 31,
-      bearingSigma: this.kind === 'array' ? 5 : 15,
-      lineHz: clamp(Math.round(line), 0, 2047),
+      cls: target ? CLASS_CODE[target.class] : 0,
+      az: az === null ? 0 : Math.round(az) & 511,
+      el: az === null ? 0 : clamp(this.elDeg, 0, 31),
+      bearingSigma: sigma === null ? 15 : clamp(Math.round(sigma), 1, 15),
+      lineHz: clamp(Math.round(this.lastF0), 0, 2047),
       line2Delta: clamp(Math.round(Math.abs(gauss(this.rng)) * 8), 0, 63),
-      target,
     };
   }
 
@@ -304,6 +381,6 @@ export class NodeStub {
   }
 
   stateHash(): string {
-    return `${this.id}:${this.aboveSince}:${this.belowSince}:${this.latched ? 1 : 0}:${this.detecting ? 1 : 0}:${this.detections}:${this.rejected}:${this.retries}:${this.queue}:${this.energy.batteryV.toFixed(6)}:${this.energy.clockOffsetUs.toFixed(6)}:${this.rng.state}`;
+    return `${this.id}:${this.comb.stateHash()}:${this.targetId}:${this.bearingDeg?.toFixed(3)}:${this.detecting ? 1 : 0}:${this.detections}:${this.rejected}:${this.retries}:${this.queue}:${this.energy.batteryV.toFixed(6)}:${this.energy.clockOffsetUs.toFixed(6)}:${this.rng.state}`;
   }
 }

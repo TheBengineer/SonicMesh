@@ -631,9 +631,9 @@ export function startApp(root: HTMLElement): void {
       if (!analysis || analysis.key !== mic) analysis = new MicAnalysis(mic);
       const lines = f.truth && f.truth.key === mic && f.state.truth ? f.truth.lines.map((l) => l.hz) : null;
       const nodeView = f.lora?.nodes.find((n) => selection?.kind === 'node' && n.id === selection.id);
-      analysis.update(ring, lines, nodeView?.detecting ?? false);
+      analysis.update(ring, lines);
       analysis.drawWaterfall(wf, overlay && lines !== null);
-      analysis.drawMarks(wf, nodeView?.detectSpans ?? [], f.simTimeS);
+      analysis.drawMarks(wf, nodeView?.detectSpans ?? [], nodeView ? (levels.get(nodeView.id)?.samples ?? []) : [], f.simTimeS);
       const strip = body.querySelector<HTMLCanvasElement>('canvas[data-plot="strip"]');
       if (strip && nodeView) analysis.drawLevel(strip, levels.get(nodeView.id)?.samples ?? [], f.simTimeS);
       const level = body.querySelector<HTMLCanvasElement>('canvas[data-plot="level"]');
@@ -679,7 +679,8 @@ export function startApp(root: HTMLElement): void {
       mic: micKeysOf(n)[0],
       detecting: f.lora?.nodes.find((v) => v.id === n.id)?.detecting ?? false,
       spans: f.lora?.nodes.find((v) => v.id === n.id)?.detectSpans ?? [],
-      marginDb: f.lora?.nodes.find((v) => v.id === n.id)?.marginDb ?? 0,
+      peak: f.lora?.nodes.find((v) => v.id === n.id)?.peak ?? 0,
+      samples: levels.get(n.id)?.samples ?? [],
       state: f.lora?.nodes.find((v) => v.id === n.id)?.detectState ?? 'quiet',
       listening: listenKey !== null && micKeysOf(n).includes(listenKey),
     }));
@@ -710,7 +711,7 @@ export function startApp(root: HTMLElement): void {
         history = new LevelHistory();
         levels.set(n.id, history);
       }
-      history.push({ t: f.simTimeS, marginDb: n.marginDb, state: n.detectState });
+      history.push({ t: f.simTimeS, peak: n.peak, state: n.detectState, trackHz: n.trackHz });
     }
   }
 

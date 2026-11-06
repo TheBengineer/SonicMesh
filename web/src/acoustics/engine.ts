@@ -12,7 +12,7 @@ import { DroneSource, PinkNoise } from './sources';
 const SOURCE_SAMPLES = 1 << 19;
 const SPECTRUM_N = 2048;
 const SPECTRUM_MAX_HZ = 4000;
-const ARRAY_OFFSETS: [number, number][] = [
+export const ARRAY_OFFSETS: [number, number][] = [
   [-1, -1],
   [1, -1],
   [-1, 1],

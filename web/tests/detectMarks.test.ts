@@ -1,43 +1,42 @@
 import { describe, expect, it } from 'vitest';
 import { snippetSpectrogram, SNIP_FS } from '../src/audio/analysis';
-import { DETECTION_THRESHOLD_DB, MAX_DETECT_SPANS, NodeStub } from '../src/lora/nodeStub';
+import { NODE_COMB_PARAMS } from '../src/detector/comb';
+import { MAX_DETECT_SPANS, NodeStub } from '../src/lora/nodeStub';
 import type { DetectState } from '../src/lora/types';
-import { hzRow, LevelHistory, METER_TICK, meterFraction, spanAt, spanColumns, type LevelSample } from '../src/ui/detectMarks';
+import { hzRow, LevelHistory, METER_TICK, meterFraction, pitchTrace, spanAt, spanColumns, type LevelSample } from '../src/ui/detectMarks';
 
 const SEC_PER_COL = 0.032;
 
 describe('detection spans at a node', () => {
-  function run(stub: NodeStub, from: number, to: number, bandDb: number): void {
-    for (let t = from; t < to; t += 0.1) stub.update(t, { bandDb, ambientDb: 40 });
+  function run(stub: NodeStub, from: number, to: number, on: boolean, f0Hz = 600): void {
+    for (let t = from; t < to; t += 0.1) stub.update(t, { bandDb: 60, ambientDb: 40, comb: { on, tracking: on, f0Hz: on ? f0Hz : 0, peak: 0.3 } });
   }
 
   it('open when the detection starts and close when it ends', () => {
     const stub = new NodeStub(1, 'detector', 7);
-    run(stub, 0, 2, 60);
+    run(stub, 0, 2, true);
     expect(stub.spans).toHaveLength(1);
     expect(stub.spans[0].startS).toBe(stub.lastDetectionS);
     expect(stub.spans[0].endS).toBeNull();
-    run(stub, 2, 4, 40);
+    run(stub, 2, 4, false);
     expect(stub.detecting).toBe(false);
     expect(stub.spans[0].endS).toBeGreaterThan(stub.spans[0].startS);
   });
 
-  it('keep the line the node reported, and only while running', () => {
+  it('keep the pitch the detector measured, and only while running', () => {
     const stub = new NodeStub(1, 'detector', 7);
-    const target = { id: 1, class: 'fpv' as const, x: 10, y: 0, alt: 30 };
-    run(stub, 0, 2, 60);
-    const det = stub.detection(2, target, 0, 0, 0);
-    expect(stub.spans[0].lineHz).toBe(det.lineHz);
-    run(stub, 2, 4, 40);
-    stub.detection(4, target, 0, 0, 0);
-    expect(stub.spans[0].lineHz).toBe(det.lineHz);
+    run(stub, 0, 2, true, 612);
+    expect(stub.spans[0].lineHz).toBe(612);
+    expect(stub.detection(null).lineHz).toBe(612);
+    run(stub, 2, 4, false);
+    expect(stub.spans[0].lineHz).toBe(612);
   });
 
   it('stop growing at the cap', () => {
     const stub = new NodeStub(1, 'detector', 7);
     for (let i = 0; i < MAX_DETECT_SPANS + 3; i++) {
-      run(stub, i * 4, i * 4 + 2, 60);
-      run(stub, i * 4 + 2, i * 4 + 4, 40);
+      run(stub, i * 4, i * 4 + 2, true);
+      run(stub, i * 4 + 2, i * 4 + 4, false);
     }
     expect(stub.spans).toHaveLength(MAX_DETECT_SPANS);
   });
@@ -103,45 +102,49 @@ describe('snippet clip spectrogram', () => {
   });
 });
 
-describe('the loudness meter', () => {
+describe('the detector meter', () => {
+  const theta = NODE_COMB_PARAMS.theta!;
+
   it('puts the threshold at the tick, stretching the low end', () => {
-    expect(meterFraction(DETECTION_THRESHOLD_DB)).toBeCloseTo(METER_TICK, 9);
+    expect(meterFraction(theta)).toBeCloseTo(METER_TICK, 9);
     expect(meterFraction(0)).toBe(0);
-    expect(meterFraction(-160)).toBe(0);
-    expect(meterFraction(1)).toBeCloseTo(METER_TICK / 2, 9);
-    expect(meterFraction(20)).toBe(1);
-    expect(meterFraction(60)).toBe(1);
+    expect(meterFraction(theta / 2)).toBeCloseTo(METER_TICK / 2, 9);
+    expect(meterFraction(0.8)).toBe(1);
+    expect(meterFraction(3)).toBe(1);
   });
 
-  it('follows the detector: quiet, then arming above the threshold, then detecting, then quiet', () => {
+  it('follows the detector: quiet, then following a pitch, then detecting, then quiet', () => {
     const stub = new NodeStub(1, 'detector', 7);
-    const feed = (t: number, bandDb: number): void => {
-      stub.update(t, { bandDb, ambientDb: 40 });
+    const feed = (t: number, tracking: boolean, on: boolean): void => {
+      stub.update(t, { bandDb: 60, ambientDb: 40, comb: { on, tracking, f0Hz: tracking ? 600 : 0, peak: tracking ? 0.3 : 0 } });
     };
-    feed(0, 40);
+    feed(0, false, false);
     expect(stub.state).toBe('quiet');
-    expect(stub.marginDb).toBe(0);
-    feed(1, 43);
+    expect(stub.peak).toBe(0);
+    feed(1, true, false);
     expect(stub.state).toBe('arming');
-    expect(stub.marginDb).toBe(3);
-    feed(1.6, 43);
+    expect(stub.peak).toBe(0.3);
+    feed(3, true, true);
     expect(stub.state).toBe('detecting');
-    feed(2, 40);
-    feed(2.6, 40);
-    expect(stub.state).toBe('quiet');
-  });
-
-  it('goes back to quiet when the level drops before the hold is over', () => {
-    const stub = new NodeStub(1, 'detector', 7);
-    stub.update(1, { bandDb: 43, ambientDb: 40 });
-    expect(stub.state).toBe('arming');
-    stub.update(1.2, { bandDb: 40, ambientDb: 40 });
+    feed(5, false, false);
     expect(stub.state).toBe('quiet');
   });
 });
 
+describe('the pitch line', () => {
+  const at = (t: number, trackHz: number): LevelSample => ({ t, peak: 0.3, state: 'detecting', trackHz });
+
+  it('fills the columns of matched samples and leaves the rest empty', () => {
+    const trace = pitchTrace([at(0, 0), at(1, 600), at(2, 0)], 3, 100, 0.032);
+    const col = (t: number): number => Math.round(99 - (3 - t) / 0.032);
+    expect(trace[col(0.5)]).toBe(0);
+    expect(trace[col(1.5)]).toBe(600);
+    expect(trace[col(2.5)]).toBe(0);
+  });
+});
+
 describe('level history', () => {
-  const sample = (t: number, state: DetectState = 'quiet'): LevelSample => ({ t, marginDb: 1, state });
+  const sample = (t: number, state: DetectState = 'quiet'): LevelSample => ({ t, peak: 0.3, state, trackHz: 0 });
 
   it('keeps one sample per step, and does not lose a brief change of state', () => {
     const h = new LevelHistory();
