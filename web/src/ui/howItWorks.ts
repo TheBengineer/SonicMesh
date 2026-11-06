@@ -127,6 +127,8 @@ interface Step {
   copy: string;
   // Fills the controls under the canvas. Null makes a step with no canvas.
   scene: ((ui: HTMLElement, canvas: HTMLCanvasElement) => Scene) | null;
+  // Fills the stage of a step with no canvas. With no panel either, the stage is the "your turn" links.
+  panel?: (stage: HTMLElement) => void;
 }
 
 function chips<T extends string>(el: HTMLElement, options: [T, string][], active: T, onPick: (v: T) => void): void {
@@ -758,6 +760,81 @@ function statusScene(ui: HTMLElement): Scene {
   };
 }
 
+// The photo of a mock node. To show it, put the file in web/public and set this to its path, such as '/mock-node.jpg'.
+// Until then the step shows a labelled sketch.
+const NODE_PHOTO: { src: string; alt: string; caption: string } | null = null;
+
+// Doc 08 section 9: one detector node, small-quantity prices, no shipping or enclosure. The battery is an estimate.
+export const NODE_PARTS = [
+  { id: 'chip', name: 'nRF52840 board', usd: 3.59, does: 'Runs the detector. It keeps sampling the mic while its CPU sleeps, which is what makes about 2 mA possible.' },
+  { id: 'mic', name: 'Digital microphone', usd: 4.95, does: 'The one sensor. It hears the drones, and it also hears the installer’s phone during setup.' },
+  { id: 'radio', name: 'LoRa radio', usd: 3.9, does: 'Sends those 15-byte reports to the gateway, and reaches hundreds of metres on very little power.' },
+  { id: 'antenna', name: 'Antenna and cable', usd: 5.9, does: 'A plain whip antenna on a short cable, and the priciest item on this list.' },
+  { id: 'board', name: 'Base board, small parts', usd: 1.4, does: 'A simple printed board that ties it all together, plus resistors and buttons.' },
+  { id: 'battery', name: '18650 cell and holder', usd: 5, does: 'One ordinary lithium cell, good for about 2 months by estimate. A small solar panel could keep it going.' },
+];
+export const NODE_BUDGET_USD = 40;
+
+export function partsTotal(ids: Iterable<string>): number {
+  const have = new Set(ids);
+  return NODE_PARTS.reduce((sum, p) => (have.has(p.id) ? sum + p.usd : sum), 0);
+}
+
+const NODE_SKETCH = `
+  <svg viewBox="0 0 480 240" role="img" aria-label="A sketch of a detector node. It is not to scale.">
+    <rect class="node-part" data-part="board" x="120" y="74" width="230" height="110" rx="6"/>
+    <rect class="node-part" data-part="chip" x="136" y="90" width="72" height="42" rx="3"/>
+    <rect class="node-part" data-part="radio" x="224" y="90" width="58" height="42" rx="3"/>
+    <path class="node-line" data-part="antenna" d="M282 100 L330 100 L330 22"/>
+    <rect class="node-part" data-part="battery" x="136" y="144" width="198" height="28" rx="14"/>
+    <circle class="node-part" data-part="mic" cx="72" cy="111" r="24"/>
+    <path class="node-line" data-part="mic" d="M96 111 L136 111"/>
+    <text x="172" y="115" text-anchor="middle" data-label="chip">chip</text>
+    <text x="253" y="115" text-anchor="middle" data-label="radio">radio</text>
+    <text x="344" y="50" data-label="antenna">antenna</text>
+    <text x="235" y="163" text-anchor="middle" data-label="battery">battery</text>
+    <text x="72" y="116" text-anchor="middle" data-label="mic">mic</text>
+    <text x="340" y="210" text-anchor="end" data-label="board">base board</text>
+  </svg>`;
+
+function nodePanel(stage: HTMLElement): void {
+  const added = new Set<string>();
+  stage.innerHTML = `
+    <figure class="how-photo">
+      ${NODE_PHOTO ? `<img src="${esc(NODE_PHOTO.src)}" alt="${esc(NODE_PHOTO.alt)}">` : NODE_SKETCH}
+      <figcaption>${NODE_PHOTO ? esc(NODE_PHOTO.caption) : 'A sketch, not to scale.'}</figcaption>
+    </figure>
+    <div class="how-budget" aria-live="polite"><span data-total></span><div class="how-budget-bar"><div data-fill></div></div></div>
+    <div class="how-parts">${NODE_PARTS.map(
+      (p) => `<button type="button" data-part-add="${esc(p.id)}" aria-pressed="false"><span>${esc(p.name)}</span><span>$${p.usd.toFixed(2)}</span></button>`,
+    ).join('')}</div>
+    <p class="how-result" data-result aria-live="polite">Tap each part to build a node, and watch the total.</p>`;
+  const total = need<HTMLElement>(stage, '[data-total]');
+  const fill = need<HTMLElement>(stage, '[data-fill]');
+  const result = need<HTMLElement>(stage, '[data-result]');
+  const refresh = (): void => {
+    const usd = partsTotal(added);
+    total.textContent = `$${usd.toFixed(2)} of the $${NODE_BUDGET_USD}`;
+    fill.style.width = `${(usd / NODE_BUDGET_USD) * 100}%`;
+    stage.querySelectorAll<SVGElement>('[data-part]').forEach((el) => el.classList.toggle('on', added.has(el.dataset.part ?? '')));
+    stage.querySelectorAll<SVGElement>('[data-label]').forEach((el) => el.classList.toggle('on', added.has(el.dataset.label ?? '')));
+  };
+  stage.querySelectorAll<HTMLButtonElement>('[data-part-add]').forEach((b) =>
+    b.addEventListener('click', () => {
+      const part = NODE_PARTS.find((p) => p.id === b.dataset.partAdd);
+      if (!part) return;
+      if (added.has(part.id)) added.delete(part.id);
+      else added.add(part.id);
+      b.setAttribute('aria-pressed', String(added.has(part.id)));
+      refresh();
+      const done = added.size === NODE_PARTS.length;
+      if (done) result.innerHTML = `<strong>That’s a whole node, about $${Math.round(partsTotal(added))} in parts.</strong> Well under $${NODE_BUDGET_USD}.`;
+      else result.textContent = added.has(part.id) ? part.does : 'Tap each part to build a node, and watch the total.';
+    }),
+  );
+  refresh();
+}
+
 // --- The steps ---
 
 const STEPS: Step[] = [
@@ -768,6 +845,16 @@ const STEPS: Step[] = [
       <p>SonicMesh is a line of cheap microphone nodes, a few hundred metres apart, that listens for that pattern. It works as a tripwire: did something cross, where, which way, and when?</p>
       <p>It also hears drones that send no radio signal at all.</p>`,
     scene: hearScene,
+  },
+  {
+    kicker: 'The hardware',
+    title: 'All on under $40 of parts',
+    copy: `<p>Each detector node is built from cheap, off-the-shelf parts, about $25 at small-quantity prices. There’s no GPS and no powerful computer: just a low-power chip, one microphone and a long-range radio.</p>
+      <p>Detection needs surprisingly little. We estimate well under a tenth of this small chip’s processing power and about 66 KB of memory.</p>
+      <p>That price leaves out shipping and a weatherproof case. Array nodes, which add bearings, cost more. These figures are estimates until nodes are built and measured.</p>
+      <p><strong>Try it:</strong> build one.</p>`,
+    scene: null,
+    panel: nodePanel,
   },
   {
     kicker: 'Step 1: on the node',
@@ -891,7 +978,9 @@ export class HowItWorks {
           ${
             step.scene
               ? '<div class="how-stage"><div class="how-canvas"><canvas aria-hidden="true"></canvas></div><div class="how-ui"></div></div>'
-              : `<div class="how-stage how-try">
+              : step.panel
+                ? '<div class="how-stage how-panel"></div>'
+                : `<div class="how-stage how-try">
                   <button type="button" data-try="fly"><strong>Fly a drone</strong><span>Take the sticks and try to cross unheard.</span></button>
                   <button type="button" data-try="listen"><strong>Hear what a node hears</strong><span>Open a node and watch its waterfall.</span></button>
                   <button type="button" data-try="real"><strong>See what’s real</strong><span>Every part of this simulation, tagged and sourced.</span></button>
@@ -919,6 +1008,7 @@ export class HowItWorks {
     );
     need<HTMLElement>(d, '.how-main').scrollTop = 0;
     need<HTMLElement>(d, '[data-next]').focus({ preventScroll: true });
+    step.panel?.(need<HTMLElement>(d, '.how-panel'));
     if (!step.scene) return;
     this.canvas = need<HTMLCanvasElement>(d, 'canvas');
     this.scene = step.scene(need<HTMLElement>(d, '.how-ui'), this.canvas);

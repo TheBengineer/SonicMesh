@@ -1543,3 +1543,125 @@ a.button-link:hover {
   background: #8ac8ff;
   border-color: #8ac8ff;
 }
+
+/* The hardware step: the node photo or sketch, a running total, and the parts to add. */
+.how-panel {
+  gap: 8px;
+}
+
+.how-photo {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 150px;
+  margin: 0;
+  padding: 6px;
+  background: #0b1016;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.how-photo svg,
+.how-photo img {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  object-fit: contain;
+}
+
+.how-photo figcaption {
+  color: var(--muted);
+  font-size: 12px;
+  text-align: right;
+}
+
+.how-photo text {
+  fill: var(--muted);
+  font-size: 15px;
+  opacity: 0.45;
+}
+
+.how-photo text.on {
+  fill: var(--text);
+  opacity: 1;
+}
+
+.how-photo .node-part {
+  fill: transparent;
+  stroke: var(--line);
+  stroke-width: 2;
+  stroke-dasharray: 5 5;
+  transition: fill 0.2s;
+}
+
+.how-photo .node-part.on {
+  fill: rgba(95, 180, 255, 0.28);
+  stroke: var(--accent);
+  stroke-dasharray: none;
+}
+
+.how-photo .node-line {
+  fill: none;
+  stroke: var(--line);
+  stroke-width: 3;
+  stroke-dasharray: 5 5;
+}
+
+.how-photo .node-line.on {
+  stroke: var(--accent);
+  stroke-dasharray: none;
+}
+
+.how-budget {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.how-budget-bar {
+  flex: 1;
+  height: 10px;
+  overflow: hidden;
+  background: var(--line);
+  border-radius: 5px;
+}
+
+.how-budget-bar div {
+  width: 0;
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.25s;
+}
+
+.how-parts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.how-parts button {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  padding: 6px 10px;
+  font-size: 13px;
+  text-align: left;
+}
+
+@media (max-width: 820px), (max-height: 500px) and (orientation: landscape) {
+  .how-photo {
+    flex: none;
+    height: 190px;
+  }
+}
+
+@media (max-height: 500px) and (orientation: landscape) {
+  .how-photo {
+    height: 130px;
+  }
+}

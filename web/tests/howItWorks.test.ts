@@ -6,11 +6,27 @@ import {
   droneSpectrum,
   gateAt,
   gateEverOn,
+  NODE_BUDGET_USD,
+  NODE_PARTS,
   pairAlert,
+  partsTotal,
   pitchesMatch,
   windSpectrum,
   type Segment,
 } from '../src/ui/howItWorks';
+
+describe('node parts', () => {
+  it('adds up to about $25, under the budget', () => {
+    const all = partsTotal(NODE_PARTS.map((p) => p.id));
+    expect(all).toBeCloseTo(24.74);
+    expect(all).toBeLessThan(NODE_BUDGET_USD);
+  });
+
+  it('counts only the parts added', () => {
+    expect(partsTotal([])).toBe(0);
+    expect(partsTotal(['mic', 'not-a-part'])).toBeCloseTo(4.95);
+  });
+});
 
 describe('comb sketch', () => {
   const drone = droneSpectrum(340);
