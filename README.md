@@ -20,3 +20,7 @@ It works as a tripwire: for each crossing it says where along the line, which wa
 ## Status
 
 Research and simulation. See [PLAN.md](PLAN.md) for the architecture, phased plan and risks, [docs/research](docs/research) for the findings behind it, and [docs/web-demo-plan.md](docs/web-demo-plan.md) for the planned browser simulation.
+
+## How it was built
+
+Most of this was built in 48 hours. The first commit landed on 4 November 2026 at 09:09 and the 48-hour mark passed on 6 November at 09:09. In that window the repository gained 35 of its 40 commits, covering the research, the acoustic simulator, the detector, the LoRa layer, the web demo and its walkthrough. The last five commits followed in the next six hours.
