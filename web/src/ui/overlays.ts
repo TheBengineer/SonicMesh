@@ -14,7 +14,7 @@ function closeOnClick(dialog: HTMLDialogElement): void {
 // The first thing a visitor sees. Esc closes it and leaves the run paused.
 export function renderIntro(dialog: HTMLDialogElement, onStart: () => void, onHow: () => void): void {
   dialog.innerHTML = `
-    <h2>Can you hear it coming?</h2>
+    <div><h2>Can you hear it coming?</h2> <i>A 48 Hour Sprint</i></div>
     <p>A small drone flying low is hard to spot, but it can't fly quietly.</p>
     <p>
       SonicMesh is a line of low-cost, $30 microphone nodes that listens for drones crossing a perimeter, and this
@@ -55,6 +55,10 @@ export function renderAbout(dialog: HTMLDialogElement, onHow: () => void): void 
       provenance ledger. Milestone M1 adds the acoustic engine: every mic hears the drone through a modelled
       path, and you can see its waterfall and listen to it. The node and gateway code arrive in later milestones.
       Each component is tagged on the "What's real?" page.
+    </p>
+    <p>
+      Most of this was built in 48 hours. 35 of the repository's 40 commits landed between 4 November 2026 at
+      09:09 and 6 November at 09:09.
     </p>
     <div class="links">
       <a href="${REPO}" target="_blank" rel="noopener">Repository on GitHub</a>
