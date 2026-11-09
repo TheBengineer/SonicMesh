@@ -57,8 +57,7 @@ export function renderAbout(dialog: HTMLDialogElement, onHow: () => void): void 
       Each component is tagged on the "What's real?" page.
     </p>
     <p>
-      Most of this was built in 48 hours. 35 of the repository's 40 commits landed between 4 November 2026 at
-      09:09 and 6 November at 09:09.
+      This was built as a 48-hour sprint.
     </p>
     <div class="links">
       <a href="${REPO}" target="_blank" rel="noopener">Repository on GitHub</a>
