@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import exampleScenario from '../scenarios/example.json';
 import goldenScenario from '../scenarios/golden-crossing.json';
 import { powerSpectrum } from '../src/acoustics/dsp';
-import { AcousticEngine } from '../src/acoustics/engine';
+import { AcousticEngine, micOverload } from '../src/acoustics/engine';
 import { AudioRing, PoseLog, RotorLog, SampleRing, type Vec3 } from '../src/acoustics/history';
 import { BLOCK, FS, REF_PA } from '../src/acoustics/model';
 import { AIR_TAPS, AirFilter, absDbPerKm, barrierGain, renderPath } from '../src/acoustics/propagate';
@@ -138,6 +138,16 @@ function rmsOf(x: Float32Array): number {
 }
 
 describe('noise and plumbing', () => {
+  it('the mic overload passes drone-level sound and squashes sound above 130 dB SPL', () => {
+    // 85 dB SPL, a loud drone at 1 m, is well below overload.
+    const quiet = REF_PA * 10 ** (85 / 20);
+    expect(Math.abs(micOverload(quiet) / quiet - 1)).toBeLessThan(0.001);
+    // A 150 dB SPL shot at 1 m is squashed to under the 130 dB ceiling.
+    const loud = REF_PA * 10 ** (150 / 20);
+    expect(micOverload(loud)).toBeLessThan(REF_PA * 10 ** (130 / 20));
+    expect(micOverload(-loud)).toBeCloseTo(-micOverload(loud), 12);
+  });
+
   it('mic self-noise is 29 dB SPL', () => {
     const scn = quietScenario({ self_noise: true, ambient_db_spl: null, wobble: false, broadband: false });
     const engine = run(scn, 2);

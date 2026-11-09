@@ -7,10 +7,10 @@ import { areaEdge, type BogieArea } from '../lora/locate';
 import type { LoraView } from '../lora/types';
 import type { Selection } from '../selection';
 import type { NodeKind } from '../sim/scenario';
-import { lastShotTick, type ShooterState } from '../sim/shots';
+import { lastShotTick, rangeClearing, type ShooterState } from '../sim/shots';
 import { SOUND_SPEED_MPS } from '../acoustics/model';
 import { TICK_S } from '../sim/clock';
-import { groundColor, placeTrees, SUV, SUVS, TENT, TENTS, type Terrain } from '../sim/terrain';
+import { groundColor, placeTrees, SUV, SUVS, TENT, TENTS, type Clearing, type Terrain } from '../sim/terrain';
 import { DRONE_CLASSES, type World, type WorldState } from '../sim/world';
 import type { DroneClass } from '../sim/scenario';
 import type { Point, ScreenPos } from '../ui/popup';
@@ -219,8 +219,8 @@ export function buildCamp(t: Terrain): THREE.Group {
   return camp;
 }
 
-function buildTrees(t: Terrain): THREE.InstancedMesh {
-  const trees = placeTrees(t);
+function buildTrees(t: Terrain, clearings: Clearing[]): THREE.InstancedMesh {
+  const trees = placeTrees(t, clearings);
   const geo = new THREE.ConeGeometry(1, 1, 6, 1);
   geo.translate(0, 0.5, 0);
   const mesh = new THREE.InstancedMesh(geo, new THREE.MeshLambertMaterial({ color: 0x2f6135, flatShading: true }), trees.length);
@@ -462,7 +462,7 @@ export class WorldView {
     disposeGroup(this.staticGroup);
     this.staticGroup.clear();
     this.terrainMesh = buildTerrain(world.terrain);
-    this.staticGroup.add(this.terrainMesh, buildRoad(world.terrain), buildTrees(world.terrain), buildCamp(world.terrain));
+    this.staticGroup.add(this.terrainMesh, buildRoad(world.terrain), buildTrees(world.terrain, world.state.shooters.flatMap((sh) => rangeClearing(sh) ?? [])), buildCamp(world.terrain));
     this.nodeGroup.clear();
     this.nodeMeshes.clear();
     this.droneGroup.clear();

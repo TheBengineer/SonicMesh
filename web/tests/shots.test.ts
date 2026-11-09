@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { ImpulseDetector, type SampleSource } from '../src/detector/impulse';
-import { shotWave, SHOT_PEAK_DB_1M } from '../src/acoustics/shot';
+import { renderShot, SHOT_FIT, SHOT_PEAK_DB_1M, shotRng } from '../src/acoustics/shot';
 import { FS, REF_PA } from '../src/acoustics/model';
-import { everyTicks, isShotTick, lastShotTick, shooterState } from '../src/sim/shots';
+import { everyTicks, isShotTick, lastShotTick, rangeClearing, RANGE_BERM_M, shooterState } from '../src/sim/shots';
+import { createRng as rng0 } from '../src/sim/rng';
+import { placeTrees } from '../src/sim/terrain';
 import { parseScenario } from '../src/sim/scenario';
 import exampleScenario from '../scenarios/example.json';
 import { createRng } from '../src/sim/rng';
@@ -42,11 +44,63 @@ describe('shot schedule', () => {
 });
 
 describe('shot waveform', () => {
-  it('peaks at the stated level at 1 m', () => {
-    const w = shotWave();
-    let peak = 0;
-    for (const v of w) peak = Math.max(peak, Math.abs(v));
-    expect(peak).toBeCloseTo(REF_PA * 10 ** (SHOT_PEAK_DB_1M / 20), 6);
+  it('peaks near the stated level at 1 m, with per-shot gain varied by a few dB', () => {
+    const peaks = [1, 2, 3, 4, 5].map((k) => {
+      const w = renderShot(shotRng(7, 1, k));
+      return Math.max(...Array.from(w, Math.abs));
+    });
+    const nominal = REF_PA * 10 ** (SHOT_PEAK_DB_1M / 20);
+    for (const p of peaks) {
+      const db = 20 * Math.log10(p / nominal);
+      expect(db).toBeGreaterThan(-4);
+      expect(db).toBeLessThan(4);
+    }
+  });
+
+  it('is deterministic for the same shot and different for the next one', () => {
+    const a = renderShot(shotRng(7, 1, 3));
+    const b = renderShot(shotRng(7, 1, 3));
+    const c = renderShot(shotRng(7, 1, 4));
+    expect(Array.from(a.slice(0, 500))).toEqual(Array.from(b.slice(0, 500)));
+    expect(Array.from(a.slice(0, 500))).not.toEqual(Array.from(c.slice(0, 500)));
+  });
+
+  it('decays with a t30 close to the recordings (about 0.6 s)', () => {
+    const w = renderShot(rng0(11));
+    const pk = Math.max(...Array.from(w, Math.abs));
+    const win = Math.round(0.005 * FS);
+    let t30 = NaN;
+    for (let i = Math.round(0.02 * FS); i < w.length; i++) {
+      let e = 0;
+      for (let j = i - win; j < i; j++) e += w[j] * w[j];
+      const db = 10 * Math.log10(e / win / (pk * pk) + 1e-15);
+      if (db < -30) {
+        t30 = i / FS;
+        break;
+      }
+    }
+    expect(t30).toBeGreaterThan(0.4);
+    expect(t30).toBeLessThan(0.8);
+    expect(SHOT_FIT.tailRt60S).toBeGreaterThan(0);
+  });
+});
+
+describe('range clearing', () => {
+  it('keeps trees out of the range footprint', () => {
+    const scn = parseScenario(exampleScenario);
+    const range = scn.shooters?.[0];
+    expect(range).toBeDefined();
+    const terrain = new Terrain(scn.seed, scn.terrain);
+    const c = rangeClearing(range!);
+    expect(c).not.toBeNull();
+    const inside = placeTrees(terrain, [c!]).filter((t) => t.x > c!.x0 && t.x < c!.x1 && t.y > c!.y0 && t.y < c!.y1);
+    expect(inside).toEqual([]);
+    // the berm sits inside the clearing
+    expect(range!.y - RANGE_BERM_M).toBeGreaterThan(c!.y0);
+  });
+
+  it('does not clear anything for a shooter placed on the map', () => {
+    expect(rangeClearing({ kind: 'shooter', x: 0, y: 0 })).toBeNull();
   });
 });
 
@@ -57,7 +111,7 @@ describe('impulse detector', () => {
     const x = new Float32Array(n);
     for (let i = 0; i < n; i++) x[i] = 1e-4 * gauss(rng);
     const at = FS; // a shot at one second
-    const w = shotWave();
+    const w = renderShot(rng0(5));
     for (let i = 0; i < w.length; i++) x[at + i] += w[i] * 0.1;
     const onsets = new ImpulseDetector().step(ringOf(x));
     expect(onsets.length).toBe(1);

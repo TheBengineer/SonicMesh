@@ -1,8 +1,12 @@
 import { TICK_S } from './clock';
 import type { ShooterSpec } from './scenario';
+import type { Clearing } from './terrain';
 
 // Shooter height above the ground. A standing shooter's mouth is about here.
 export const SHOOTER_H_M = 1.5;
+// A range's berm, downrange of its firing line. The shots bounce off it, and the 3D view draws it at the same distance.
+export const RANGE_BERM_M = 115;
+
 // What a click in gunshot mode adds: a shooter that fires as often as the range does.
 export const SHOOTER_EVERY_S = 4;
 
@@ -15,6 +19,12 @@ export interface ShooterState {
   y: number;
   everyTicks: number;
   t0: number;
+}
+
+// The ground a range takes: its firing line, targets and berm, in sim metres. Trees keep out of it.
+export function rangeClearing(s: { kind: 'range' | 'shooter'; x: number; y: number }): Clearing | null {
+  if (s.kind !== 'range') return null;
+  return { x0: s.x - 35, x1: s.x + 35, y0: s.y - RANGE_BERM_M - 10, y1: s.y + 15 };
 }
 
 export function everyTicks(everyS: number): number {

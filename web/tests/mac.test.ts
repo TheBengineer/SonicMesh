@@ -88,7 +88,8 @@ describe('LoRa MAC and schedule', () => {
   });
 
   it('in the example, array bearings point near the drone with no truth going in', () => {
-    const scn = parseScenario({ ...exampleScenario, drones: exampleScenario.drones.slice(0, 1) });
+    // drone only: the range's loud shots reduce bearings, which the next test covers
+    const scn = parseScenario({ ...exampleScenario, drones: exampleScenario.drones.slice(0, 1), shooters: [] });
     const runner = new Runner(scn);
     const engine = new AcousticEngine(scn, runner.world.terrain, { ringSeconds: 3 });
     engine.start(runner.world);
@@ -110,6 +111,32 @@ describe('LoRa MAC and schedule', () => {
     errors.sort((a, b) => a - b);
     expect(errors.length).toBeGreaterThan(20);
     expect(errors[errors.length >> 1]).toBeLessThan(10);
+  }, 120_000);
+
+  it('with the range firing, array bearings still point near the drone, less often', () => {
+    const scn = parseScenario({ ...exampleScenario, drones: exampleScenario.drones.slice(0, 1) });
+    const runner = new Runner(scn);
+    const engine = new AcousticEngine(scn, runner.world.terrain, { ringSeconds: 3 });
+    engine.start(runner.world);
+    const errors: number[] = [];
+    for (let i = 0; i < 5000; i++) {
+      runner.stepTick();
+      engine.tick(runner.world);
+      runner.lora.observeFromEngine(runner.world, engine);
+      if (i % 50 !== 0) continue;
+      const d = runner.world.state.drones[0];
+      for (const v of runner.lora.snapshot().nodes) {
+        const n = scn.nodes.find((o) => o.id === v.id)!;
+        if (v.kind !== 'array') expect(v.bearingDeg).toBeNull();
+        if (v.bearingDeg === null || Math.hypot(d.x - n.x, d.y - n.y) > 300) continue;
+        const az = (Math.atan2(d.x - n.x, d.y - n.y) * 180) / Math.PI;
+        errors.push(Math.abs(((v.bearingDeg - az + 540) % 360) - 180));
+      }
+    }
+    errors.sort((a, b) => a - b);
+    // shots from the range cover about a fifth of the time, and their tails spoil some estimates
+    expect(errors.length).toBeGreaterThan(4);
+    expect(errors[errors.length >> 1]).toBeLessThan(15);
   }, 120_000);
 
   it('groups neighbours with matching pitches into bogies, without naming drones', () => {

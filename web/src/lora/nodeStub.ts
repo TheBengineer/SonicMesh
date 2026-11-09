@@ -25,7 +25,7 @@ export const MAX_DETECT_SPANS = 8;
 const MAX_SHOT_TIMES = 8;
 // The harmonic detector skips any frame that overlaps a shot and this long after it, so a shot cannot break or start a
 // drone track. A drone's track holds for about a second, so a quarter-second gap leaves it intact.
-const SHOT_MASK_S = 0.25;
+const SHOT_MASK_S = 0.6;
 export const RANGE_SIGMA_M = 4;
 export const NLOS_P = 0.25;
 export const NLOS_MAX_M = 12;
@@ -303,6 +303,8 @@ export class NodeStub {
     this.bearingFrames ??= offsets.map(() => new Float32Array(BEARING_SAMPLES));
     const frames = this.bearingFrames;
     if (!rings.every((r, j) => r.written >= BEARING_SAMPLES && r.read(r.written - BEARING_SAMPLES, frames[j]))) return;
+    // A shot or its reverb tail in the window would bias the bearing, so wait for it to pass.
+    if (this.inShot(rings[0].written - BEARING_SAMPLES, BEARING_SAMPLES)) return;
     this.bearingAt = t;
     const found = estimateBearing(frames, offsets, f0);
     if (!found) return;

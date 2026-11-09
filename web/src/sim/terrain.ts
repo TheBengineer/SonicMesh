@@ -124,8 +124,15 @@ function inCamp(x: number, y: number): boolean {
   return x > Math.min(...xs) - reach && x < Math.max(...xs) + reach && y > Math.min(...ys) - reach && y < Math.max(...ys) + reach;
 }
 
-// Visual only. Trees come from the seed, not from the sim state.
-export function placeTrees(t: Terrain): Tree[] {
+export interface Clearing {
+  x0: number;
+  x1: number;
+  y0: number;
+  y1: number;
+}
+
+// Visual only. Trees come from the seed, not from the sim state. No tree goes in the camp or in a clearing.
+export function placeTrees(t: Terrain, clearings: Clearing[] = []): Tree[] {
   const rng = createRng(t.seed ^ 0x9e3779b9);
   const trees: Tree[] = [];
   const clusters = Math.round((70 * (t.halfX * t.halfY)) / (2500 * 1000)); // the same tree density on any terrain
@@ -138,6 +145,7 @@ export function placeTrees(t: Terrain): Tree[] {
       const x = cx + (range(rng, -1, 1) + range(rng, -1, 1)) * spread;
       const y = cy + (range(rng, -1, 1) + range(rng, -1, 1)) * spread;
       if (!t.contains(x, y) || Math.abs(y - t.roadY) < 25 || inCamp(x, y)) continue;
+      if (clearings.some((c) => x > c.x0 && x < c.x1 && y > c.y0 && y < c.y1)) continue;
       trees.push({ x, y, height_m: range(rng, 7, 14), radius_m: range(rng, 2.5, 4) });
     }
   }

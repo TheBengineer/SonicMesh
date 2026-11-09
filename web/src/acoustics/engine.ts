@@ -2,19 +2,26 @@ import { TICK_S } from '../sim/clock';
 import { createRng, type Rng } from '../sim/rng';
 import type { DroneClass, ScenarioFile } from '../sim/scenario';
 import type { Terrain } from '../sim/terrain';
-import { isShotTick, SHOOTER_H_M, type ShooterState } from '../sim/shots';
+import { isShotTick, RANGE_BERM_M, SHOOTER_H_M, type ShooterState } from '../sim/shots';
 import type { World } from '../sim/world';
 import { bandLevelDb, gauss, hann, powerSpectrum } from './dsp';
 import { AudioRing, PoseLog, RotorLog, SampleRing, type Vec3 } from './history';
 import { ARRAY_HALF_M, ARRAY_MIC_H_M, BLOCK, DETECTOR_MIC_H_M, FS, GROUND_GAMMA, REF_PA, SELF_NOISE_DB } from './model';
 import { AirFilter, barrierGain, renderPath, solveDelay } from './propagate';
-import { shotWave } from './shot';
+import { renderShot, shotRng } from './shot';
 import { DroneSource, PinkNoise } from './sources';
 
 const SOURCE_SAMPLES = 1 << 19;
 // A shooter only needs its shots, but a far mic reads a shot seconds after it was fired, so keep 16 s.
 const SHOOTER_SAMPLES = 1 << 18;
-const SHOT = shotWave();
+// ASSUMED: the berm's reflection, as amplitude relative to the direct path. Not measured.
+const ECHO_GAIN = 0.3;
+// Where a microphone stops being linear: about 130 dB SPL, a typical MEMS overload point. Louder sound is squashed.
+const MIC_OVERLOAD_PA = REF_PA * 10 ** (130 / 20);
+// The mic's squash, applied to every source's sum: drones and shots alike.
+export function micOverload(pa: number): number {
+  return MIC_OVERLOAD_PA * Math.tanh(pa / MIC_OVERLOAD_PA);
+}
 const SPECTRUM_N = 2048;
 const SPECTRUM_MAX_HZ = 4000;
 export const ARRAY_OFFSETS: [number, number][] = [
@@ -42,6 +49,8 @@ interface Shooter {
   st: ShooterState;
   log: PoseLog;
   src: SampleRing;
+  // A range's berm echo comes from the mirror image of the shooter across the berm.
+  echo: PoseLog | null;
 }
 
 interface Mic {
@@ -104,7 +113,9 @@ export class AcousticEngine {
     // A shot that starts at tick T-1 begins at the first sample of this block.
     for (const sh of this.shooters.values()) {
       if (!isShotTick(sh.st, T - 1)) continue;
-      for (let i = 0; i < SHOT.length; i++) sh.src.put(n0 + i, SHOT[i]);
+      const k = (T - 1 - sh.st.t0) / sh.st.everyTicks;
+      const wave = renderShot(shotRng(this.scn.seed, sh.st.id, k));
+      for (let i = 0; i < wave.length; i++) sh.src.put(n0 + i, wave[i]);
     }
     for (const m of this.mics.values()) this.renderMic(m, n0);
   }
@@ -221,12 +232,15 @@ export class AcousticEngine {
     const settings = this.scn.acoustics;
     out.fill(0);
     for (const [id, d] of this.drones) this.renderSource(m, out, n0, `d${id}`, d.src, d.log);
-    for (const [id, sh] of this.shooters) this.renderSource(m, out, n0, `s${id}`, sh.src, sh.log);
+    for (const [id, sh] of this.shooters) {
+      this.renderSource(m, out, n0, `s${id}`, sh.src, sh.log);
+      if (sh.echo) this.renderEcho(m, out, n0, `e${id}`, sh.src, sh.echo);
+    }
     for (let i = 0; i < BLOCK; i++) {
       let v = out[i];
       if (settings.self_noise) v += this.selfRms * gauss(m.rng);
       if (m.pink) v += this.ambRms * m.pink.next();
-      out[i] = v;
+      out[i] = micOverload(v);
     }
     m.ring.write(out);
   }
@@ -243,6 +257,15 @@ export class AcousticEngine {
     renderPath(out, n0, src, log, m.pos, 2 * m.ground, GROUND_GAMMA, airs.image);
   }
 
+  private renderEcho(m: Mic, out: Float64Array, n0: number, key: string, src: SampleRing, log: PoseLog): void {
+    let airs = m.airs.get(key);
+    if (!airs) {
+      airs = { direct: new AirFilter(), image: new AirFilter() };
+      m.airs.set(key, airs);
+    }
+    renderPath(out, n0, src, log, m.pos, null, ECHO_GAIN, airs.direct);
+  }
+
   // Makes drones, shooters and mics match the world. Poses are recorded for the current tick.
   private sync(world: World): void {
     const s = world.state;
@@ -251,11 +274,14 @@ export class AcousticEngine {
       seenShooters.add(st.id);
       let sh = this.shooters.get(st.id);
       if (!sh) {
-        sh = { st, log: new PoseLog(), src: new SampleRing(SHOOTER_SAMPLES) };
+        sh = { st, log: new PoseLog(), src: new SampleRing(SHOOTER_SAMPLES), echo: st.kind === 'range' ? new PoseLog() : null };
         this.shooters.set(st.id, sh);
       }
       sh.st = st;
-      sh.log.push(s.tick, { x: st.x, y: st.y, alt: this.terrain.height(st.x, st.y) + SHOOTER_H_M, vz: 0 });
+      const alt = this.terrain.height(st.x, st.y) + SHOOTER_H_M;
+      sh.log.push(s.tick, { x: st.x, y: st.y, alt, vz: 0 });
+      // The berm lies south of a range, so its mirror image is the same distance beyond it.
+      sh.echo?.push(s.tick, { x: st.x, y: st.y - 2 * RANGE_BERM_M, alt, vz: 0 });
     }
     for (const id of [...this.shooters.keys()]) if (!seenShooters.has(id)) this.shooters.delete(id);
     const seenDrones = new Set<number>();
