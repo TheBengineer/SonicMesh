@@ -4,6 +4,7 @@ import { approach, clamp } from './math';
 import type { DroneClass, DroneSpec, FlightMode, NodeSpec, PathSpec, ScenarioFile, Vec2 } from './scenario';
 import type { Terrain } from './terrain';
 import type { Op } from './inputs';
+import { shooterState, type ShooterState } from './shots';
 import type { LoRaNetwork } from '../lora/mac';
 
 export interface Stick {
@@ -38,6 +39,7 @@ export interface WorldState {
   gateway: Vec2;
   nodes: NodeSpec[];
   drones: DroneState[];
+  shooters: ShooterState[];
 }
 
 export interface World {
@@ -178,6 +180,7 @@ export function createWorld(scn: ScenarioFile, terrain: Terrain): World {
       gateway: { ...scn.gateway },
       nodes: scn.nodes.map((n) => ({ ...n })),
       drones: scn.drones.map((d) => spawnDrone(d, 0, terrain)),
+      shooters: (scn.shooters ?? []).map((sh) => shooterState(sh, 0)),
     },
   };
 }
@@ -236,6 +239,12 @@ export function applyOp(world: World, op: Op): void {
       break;
     case 'drone_remove':
       s.drones = s.drones.filter((d) => d.id !== op.id);
+      break;
+    case 'shooter_add':
+      if (!s.shooters.some((sh) => sh.id === op.shooter.id)) s.shooters.push(shooterState(op.shooter, s.tick));
+      break;
+    case 'shooter_remove':
+      s.shooters = s.shooters.filter((sh) => sh.id !== op.id);
       break;
     case 'node_add':
       if (!findNode(s, op.node.id)) {

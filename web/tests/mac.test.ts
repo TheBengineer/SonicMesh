@@ -171,7 +171,7 @@ describe('LoRa MAC and schedule', () => {
   });
 
   it('the example scenario produces beacons, ranging, detections and snippets', () => {
-    // one drone, so the crossing makes exactly one event
+    // one drone, and the range firing as in the example, so the crossing makes exactly one event while shots are heard
     const scn = parseScenario({ ...exampleScenario, drones: exampleScenario.drones.slice(0, 1) });
     const runner = new Runner(scn);
     const engine = new AcousticEngine(scn, runner.world.terrain, { ringSeconds: 25 });
@@ -180,6 +180,8 @@ describe('LoRa MAC and schedule', () => {
     let ambient = 0;
     const droneId = runner.world.state.drones[0].id;
     let linked = 0;
+    // node-ticks where a node is detecting the drone and heard a shot within half a second of that tick
+    let both = 0;
     // The packet log keeps only the newest packets, so collect types during the run.
     const types = new Set<string>();
     // the drone crosses near node 3 at about 17 s; run to 90 s, past the end of the event
@@ -191,6 +193,9 @@ describe('LoRa MAC and schedule', () => {
       ambient = engine.ambientDb();
       if (i % 50 === 0) {
         const snap = runner.lora.snapshot();
+        for (const n of snap.nodes) {
+          if (n.detecting && n.shotTimesS.some((t) => Math.abs(t - i * TICK_S) < 0.5)) both++;
+        }
         for (const p of snap.packets) types.add(p.type);
         for (const n of snap.nodes) {
           if (!n.detecting) expect(n.targetIds).toEqual([]);
@@ -202,6 +207,7 @@ describe('LoRa MAC and schedule', () => {
       }
     }
     expect(linked, 'a node was linked to the drone').toBeGreaterThan(0);
+    expect(both, 'a node heard a shot while it was detecting the drone').toBeGreaterThan(0);
     for (const type of ['BEACON', 'RANGING_RESULT', 'DETECT_START', 'DETECT', 'SNIPPET']) {
       expect(types.has(type), `example run sent ${type}`).toBe(true);
     }

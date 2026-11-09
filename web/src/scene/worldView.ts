@@ -7,6 +7,9 @@ import { areaEdge, type BogieArea } from '../lora/locate';
 import type { LoraView } from '../lora/types';
 import type { Selection } from '../selection';
 import type { NodeKind } from '../sim/scenario';
+import { lastShotTick, type ShooterState } from '../sim/shots';
+import { SOUND_SPEED_MPS } from '../acoustics/model';
+import { TICK_S } from '../sim/clock';
 import { groundColor, placeTrees, SUV, SUVS, TENT, TENTS, type Terrain } from '../sim/terrain';
 import { DRONE_CLASSES, type World, type WorldState } from '../sim/world';
 import type { DroneClass } from '../sim/scenario';
@@ -272,6 +275,63 @@ function buildNode(kind: NodeKind, id: number): THREE.Group {
   return g;
 }
 
+// Visual only, at real size. A range has a firing line at its origin and its targets downrange, which is south (+z here,
+// away from the line of nodes), so the targets sit at 25, 50 and 100 m. The berm stops the rounds at the end.
+function buildRange(): THREE.Group {
+  const group = new THREE.Group();
+  const wood = 0x6b5a3e;
+  const steel = 0x7a7f86;
+  for (const x of [-6, 0, 6]) group.add(solid(new THREE.BoxGeometry(2.5, 0.5, 0.8), wood, x, 0.4, 0));
+  for (const x of [-10, 10]) group.add(solid(new THREE.BoxGeometry(0.25, 3.2, 0.25), wood, x, 1.6, 0));
+  group.add(solid(new THREE.BoxGeometry(22, 0.3, 4), steel, 0, 3.35, -0.5));
+  group.add(solid(new THREE.BoxGeometry(4, 2.6, 3), steel, 16, 1.3, -2));
+  group.add(solid(new THREE.BoxGeometry(4.6, 0.25, 3.6), 0x4b5320, 16, 2.7, -2));
+  group.add(solid(new THREE.CylinderGeometry(0.08, 0.08, 7, 6), 0xbfc3c8, -14, 3.5, 0));
+  group.add(solid(new THREE.BoxGeometry(1.2, 0.7, 0.04), 0xb0302f, -13.4, 6.4, 0));
+  for (const z of [25, 50, 100]) {
+    group.add(solid(new THREE.BoxGeometry(0.15, 2, 0.15), wood, 0, 1, z));
+    group.add(solid(new THREE.BoxGeometry(1.0, 1.2, 0.05), 0xdedacb, 0, 1.6, z));
+    group.add(solid(new THREE.BoxGeometry(0.4, 0.4, 0.06), 0x222222, 0, 1.6, z + 0.03));
+  }
+  group.add(solid(new THREE.BoxGeometry(60, 6, 6), 0x5d6b3a, 0, 2.5, 115));
+  return group;
+}
+
+// A shooter on the ground, standing at its origin with the rifle downrange (-z).
+function buildShooter(): THREE.Group {
+  const group = new THREE.Group();
+  const cloth = 0x3d4a2f;
+  group.add(solid(new THREE.BoxGeometry(0.5, 0.9, 0.4), 0x2b2f24, 0, 0.45, 0));
+  group.add(solid(new THREE.BoxGeometry(0.6, 0.9, 0.4), cloth, 0, 1.35, 0));
+  group.add(solid(new THREE.SphereGeometry(0.2, 8, 6), 0xd9b79a, 0, 2.0, 0));
+  group.add(solid(new THREE.BoxGeometry(0.1, 0.12, 1.0), 0x1d1d1d, 0.1, 1.4, -0.5));
+  return group;
+}
+
+// The bright part of a shot, at the muzzle. Shown for a moment after each shot. A range faces south (+z), a shooter north (-z).
+function muzzleFlash(kind: ShooterState['kind']): THREE.Mesh {
+  const mat = new THREE.MeshBasicMaterial({ color: 0xffd166, transparent: true, opacity: 0, depthWrite: false });
+  const flash = new THREE.Mesh(new THREE.SphereGeometry(0.6, 8, 6), mat);
+  flash.position.set(0.1, 1.4, kind === 'range' ? 1.1 : -1.1);
+  flash.raycast = () => {};
+  return flash;
+}
+
+// The blast wave on the ground, drawn at the speed of sound so its growth is real.
+function blastWave(): THREE.Mesh {
+  const mat = new THREE.MeshBasicMaterial({ color: 0xffe9a8, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false });
+  const wave = new THREE.Mesh(new THREE.RingGeometry(0.97, 1, 64), mat);
+  wave.rotation.x = -Math.PI / 2;
+  wave.position.y = 0.5;
+  wave.raycast = () => {};
+  return wave;
+}
+
+const FLASH_S = 0.08;
+const WAVE_S = 1.5;
+const HEARD_S = 1.5;
+const HEARD_RADIUS_M = 40;
+
 function buildGateway(): THREE.Group {
   const g = new THREE.Group();
   g.userData.target = { kind: 'gateway' } satisfies Target;
@@ -341,6 +401,9 @@ export class WorldView {
   private readonly droneGroup = new THREE.Group();
   private readonly packetGroup = new THREE.Group();
   private readonly detectGroup = new THREE.Group();
+  private readonly shooterGroup = new THREE.Group();
+  private readonly shooterMeshes = new Map<number, { kind: ShooterState['kind']; obj: THREE.Group; flash: THREE.Mesh; wave: THREE.Mesh }>();
+  private readonly shotGroup = new THREE.Group();
   private readonly labelTextures = new Map<string, THREE.CanvasTexture>();
   private readonly gateway = buildGateway();
   private map: HTMLCanvasElement | null = null;
@@ -368,6 +431,7 @@ export class WorldView {
     sun.position.set(-1500, 2500, 1000);
     this.scene.add(new THREE.HemisphereLight(0xffffff, 0x4d6035, 1.8), sun);
     this.scene.add(this.staticGroup, this.nodeGroup, this.droneGroup, this.packetGroup, this.detectGroup, this.gateway);
+    this.scene.add(this.shooterGroup, this.shotGroup);
     this.scene.add(this.ringGroup);
     if (!renderer || !controls) {
       const note = document.createElement('div');
@@ -403,6 +467,9 @@ export class WorldView {
     this.nodeMeshes.clear();
     this.droneGroup.clear();
     this.droneMeshes.clear();
+    disposeGroup(this.shooterGroup);
+    this.shooterGroup.clear();
+    this.shooterMeshes.clear();
     this.setView('orbit', null);
   }
 
@@ -524,9 +591,75 @@ export class WorldView {
     this.gateway.position.copy(toScene(state.gateway.x, state.gateway.y, terrain.height(state.gateway.x, state.gateway.y)));
     this.gateway.scale.setScalar(isSelected(selection, 'gateway') ? SELECTED_SCALE : ICON_SCALE);
 
+    this.updateShooters(world, state);
+    this.updateShots(world, state, lora, nowS);
     this.updateRings(world, state, selection);
     this.updatePackets(world, state, lora, nowS);
     this.updateDetections(world, state, lora, nowS);
+  }
+
+  // Each shooter at its place, with its flash and blast wave for a moment after each shot. A range shows its
+  // firing line, targets and berm.
+  private updateShooters(world: World, state: WorldState): void {
+    const terrain = world.terrain;
+    const seen = new Set<number>();
+    for (const sh of state.shooters) {
+      seen.add(sh.id);
+      let e = this.shooterMeshes.get(sh.id);
+      if (!e || e.kind !== sh.kind) {
+        if (e) {
+          this.shooterGroup.remove(e.obj);
+          disposeGroup(e.obj);
+        }
+        const obj = new THREE.Group();
+        obj.add(sh.kind === 'range' ? buildRange() : buildShooter());
+        const flash = muzzleFlash(sh.kind);
+        const wave = blastWave();
+        obj.add(flash, wave);
+        e = { kind: sh.kind, obj, flash, wave };
+        this.shooterGroup.add(obj);
+        this.shooterMeshes.set(sh.id, e);
+      }
+      e.obj.position.copy(toScene(sh.x, sh.y, terrain.height(sh.x, sh.y)));
+      const last = lastShotTick(sh, state.tick);
+      const age = last === null ? Infinity : (state.tick - last) * TICK_S;
+      const flashOn = age < FLASH_S;
+      (e.flash.material as THREE.MeshBasicMaterial).opacity = flashOn ? 0.9 : 0;
+      e.flash.visible = flashOn;
+      const waveAge = Math.min(age, WAVE_S);
+      const wave = e.wave.material as THREE.MeshBasicMaterial;
+      e.wave.visible = age < WAVE_S;
+      e.wave.scale.setScalar(Math.max(1, SOUND_SPEED_MPS * waveAge));
+      wave.opacity = age < WAVE_S ? 0.7 * (1 - waveAge / WAVE_S) : 0;
+    }
+    for (const [id, e] of this.shooterMeshes) {
+      if (seen.has(id)) continue;
+      this.shooterGroup.remove(e.obj);
+      disposeGroup(e.obj);
+      this.shooterMeshes.delete(id);
+    }
+  }
+
+  // A ring on each node that heard a shot, growing for a moment after the shot reached it.
+  private updateShots(world: World, state: WorldState, lora: LoraView | null, nowS: number): void {
+    disposeGroup(this.shotGroup);
+    this.shotGroup.clear();
+    if (!lora) return;
+    for (const v of lora.nodes) {
+      const n = state.nodes.find((node) => node.id === v.id);
+      if (!n) continue;
+      for (const t of v.shotTimesS) {
+        const age = nowS - t;
+        if (age < 0 || age > HEARD_S) continue;
+        const mat = new THREE.MeshBasicMaterial({ color: 0xff4d6d, transparent: true, opacity: 0.8 * (1 - age / HEARD_S), side: THREE.DoubleSide, depthWrite: false, depthTest: false });
+        const ring = new THREE.Mesh(new THREE.RingGeometry(0.9, 1, 40), mat);
+        ring.rotation.x = -Math.PI / 2;
+        ring.scale.setScalar(4 + (HEARD_RADIUS_M * age) / HEARD_S);
+        ring.position.copy(toScene(n.x, n.y, world.terrain.height(n.x, n.y) + 2));
+        ring.raycast = () => {};
+        this.shotGroup.add(ring);
+      }
+    }
   }
 
   // What nodes report: a pulse and pitch on each detecting node, an array's bearing arrow, a band over each bogie, and a
@@ -817,6 +950,26 @@ export class WorldView {
     for (const [size, spots, color] of [[TENT, TENTS, '#6b7530'], [SUV, SUVS, '#c8ccc0']] as const) {
       ctx.fillStyle = color;
       for (const at of spots) ctx.fillRect(sx(at.x) - (size.width_m * scale) / 2, sy(at.y) - (size.length_m * scale) / 2, size.width_m * scale, size.length_m * scale);
+    }
+    // Shooters, flashing at each shot, and the rings of shots that nodes heard.
+    for (const sh of state.shooters) {
+      const last = lastShotTick(sh, state.tick);
+      const age = last === null ? Infinity : (state.tick - last) * TICK_S;
+      ctx.fillStyle = age < FLASH_S ? '#ffd166' : '#d9a441';
+      ctx.fillRect(sx(sh.x) - 4, sy(sh.y) - 4, 8, 8);
+    }
+    for (const v of lora?.nodes ?? []) {
+      const n = state.nodes.find((node) => node.id === v.id);
+      if (!n) continue;
+      for (const t of v.shotTimesS) {
+        const age = nowS - t;
+        if (age < 0 || age > HEARD_S) continue;
+        ctx.strokeStyle = `rgba(255, 77, 109, ${0.8 * (1 - age / HEARD_S)})`;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(sx(n.x), sy(n.y), 6 + (HEARD_RADIUS_M * age) / HEARD_S / scale, 0, Math.PI * 2);
+        ctx.stroke();
+      }
     }
 
     if (lora) {

@@ -35,6 +35,11 @@
       "type": "array",
       "items": { "$ref": "#/definitions/drone" }
     },
+    "shooters": {
+      "description": "Gunshot emitters. A range is a shooter with a firing line and targets in the 3D view. Each fires every every_s seconds. Omitted means none.",
+      "type": "array",
+      "items": { "$ref": "#/definitions/shooter" }
+    },
     "acoustics": {
       "description": "Switches for the random and terrain-dependent acoustic model. Omitted means all on, with 40 dB SPL ambient.",
       "type": "object",
@@ -49,6 +54,18 @@
     }
   },
   "definitions": {
+    "shooter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "x", "y", "every_s"],
+      "properties": {
+        "id": { "type": "integer" },
+        "kind": { "enum": ["range", "shooter"] },
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "every_s": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    },
     "vec2": {
       "type": "object",
       "additionalProperties": false,

@@ -37,5 +37,6 @@
         "clearance_m": 20
       }
     }
-  ]
+  ],
+  "shooters": [{ "id": 1, "kind": "range", "x": 420, "y": -200, "every_s": 4 }]
 }

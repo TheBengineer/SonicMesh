@@ -2,14 +2,19 @@ import { TICK_S } from '../sim/clock';
 import { createRng, type Rng } from '../sim/rng';
 import type { DroneClass, ScenarioFile } from '../sim/scenario';
 import type { Terrain } from '../sim/terrain';
+import { isShotTick, SHOOTER_H_M, type ShooterState } from '../sim/shots';
 import type { World } from '../sim/world';
 import { bandLevelDb, gauss, hann, powerSpectrum } from './dsp';
 import { AudioRing, PoseLog, RotorLog, SampleRing, type Vec3 } from './history';
 import { ARRAY_HALF_M, ARRAY_MIC_H_M, BLOCK, DETECTOR_MIC_H_M, FS, GROUND_GAMMA, REF_PA, SELF_NOISE_DB } from './model';
 import { AirFilter, barrierGain, renderPath, solveDelay } from './propagate';
+import { shotWave } from './shot';
 import { DroneSource, PinkNoise } from './sources';
 
 const SOURCE_SAMPLES = 1 << 19;
+// A shooter only needs its shots, but a far mic reads a shot seconds after it was fired, so keep 16 s.
+const SHOOTER_SAMPLES = 1 << 18;
+const SHOT = shotWave();
 const SPECTRUM_N = 2048;
 const SPECTRUM_MAX_HZ = 4000;
 export const ARRAY_OFFSETS: [number, number][] = [
@@ -33,19 +38,27 @@ interface Drone {
   model: DroneSource;
 }
 
+interface Shooter {
+  st: ShooterState;
+  log: PoseLog;
+  src: SampleRing;
+}
+
 interface Mic {
   pos: Vec3;
   ground: number;
   ring: AudioRing;
   rng: Rng;
   pink: PinkNoise | null;
-  airs: Map<number, { direct: AirFilter; image: AirFilter }>;
+  // Filters per source, keyed by source ("d1", "s2"), so a drone and a shooter with the same id keep apart.
+  airs: Map<string, { direct: AirFilter; image: AirFilter }>;
 }
 
 // Renders every mic in the scene, one block per tick. Call start() once, then tick() after each world step.
 // Ticks must advance by exactly one. Replay stays exact because nothing here reads wall-clock time.
 export class AcousticEngine {
   private readonly drones = new Map<number, Drone>();
+  private readonly shooters = new Map<number, Shooter>();
   private readonly mics = new Map<string, Mic>();
   private readonly out = new Float64Array(BLOCK);
   private readonly tmp = new Float64Array(BLOCK);
@@ -87,6 +100,11 @@ export class AcousticEngine {
       d.model.render(this.tmp, this.factor);
       for (let i = 0; i < BLOCK; i++) d.src.put(n0 + i, this.tmp[i]);
       d.rotors.push(T, d.model.hz);
+    }
+    // A shot that starts at tick T-1 begins at the first sample of this block.
+    for (const sh of this.shooters.values()) {
+      if (!isShotTick(sh.st, T - 1)) continue;
+      for (let i = 0; i < SHOT.length; i++) sh.src.put(n0 + i, SHOT[i]);
     }
     for (const m of this.mics.values()) this.renderMic(m, n0);
   }
@@ -202,17 +220,8 @@ export class AcousticEngine {
     const out = this.out;
     const settings = this.scn.acoustics;
     out.fill(0);
-    for (const [id, d] of this.drones) {
-      let airs = m.airs.get(id);
-      if (!airs) {
-        airs = { direct: new AirFilter(), image: new AirFilter() };
-        m.airs.set(id, airs);
-      }
-      d.log.at(n0 / FS, this.pose);
-      const barrier = barrierGain(this.terrain, this.pose, m.pos);
-      renderPath(out, n0, d.src, d.log, m.pos, null, barrier, airs.direct);
-      renderPath(out, n0, d.src, d.log, m.pos, 2 * m.ground, GROUND_GAMMA, airs.image);
-    }
+    for (const [id, d] of this.drones) this.renderSource(m, out, n0, `d${id}`, d.src, d.log);
+    for (const [id, sh] of this.shooters) this.renderSource(m, out, n0, `s${id}`, sh.src, sh.log);
     for (let i = 0; i < BLOCK; i++) {
       let v = out[i];
       if (settings.self_noise) v += this.selfRms * gauss(m.rng);
@@ -222,9 +231,33 @@ export class AcousticEngine {
     m.ring.write(out);
   }
 
-  // Makes drones and mics match the world. Poses are recorded for the current tick.
+  private renderSource(m: Mic, out: Float64Array, n0: number, key: string, src: SampleRing, log: PoseLog): void {
+    let airs = m.airs.get(key);
+    if (!airs) {
+      airs = { direct: new AirFilter(), image: new AirFilter() };
+      m.airs.set(key, airs);
+    }
+    log.at(n0 / FS, this.pose);
+    const barrier = barrierGain(this.terrain, this.pose, m.pos);
+    renderPath(out, n0, src, log, m.pos, null, barrier, airs.direct);
+    renderPath(out, n0, src, log, m.pos, 2 * m.ground, GROUND_GAMMA, airs.image);
+  }
+
+  // Makes drones, shooters and mics match the world. Poses are recorded for the current tick.
   private sync(world: World): void {
     const s = world.state;
+    const seenShooters = new Set<number>();
+    for (const st of s.shooters) {
+      seenShooters.add(st.id);
+      let sh = this.shooters.get(st.id);
+      if (!sh) {
+        sh = { st, log: new PoseLog(), src: new SampleRing(SHOOTER_SAMPLES) };
+        this.shooters.set(st.id, sh);
+      }
+      sh.st = st;
+      sh.log.push(s.tick, { x: st.x, y: st.y, alt: this.terrain.height(st.x, st.y) + SHOOTER_H_M, vz: 0 });
+    }
+    for (const id of [...this.shooters.keys()]) if (!seenShooters.has(id)) this.shooters.delete(id);
     const seenDrones = new Set<number>();
     for (const d of s.drones) {
       seenDrones.add(d.id);

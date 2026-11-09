@@ -36,6 +36,13 @@ export interface AcousticSettings {
 
 export const DEFAULT_ACOUSTICS: AcousticSettings = { self_noise: true, ambient_db_spl: 40, wobble: true, broadband: true };
 
+// A gunshot emitter. A range is one of these too: it fires every every_s seconds, like the others.
+export interface ShooterSpec extends Vec2 {
+  id: number;
+  kind: 'range' | 'shooter';
+  every_s: number;
+}
+
 export interface ScenarioFile {
   format: 'sonicmesh-scenario';
   version: 1;
@@ -50,6 +57,7 @@ export interface ScenarioFile {
   gateway: Vec2;
   nodes: NodeSpec[];
   drones: DroneSpec[];
+  shooters?: ShooterSpec[];
   acoustics: AcousticSettings;
 }
 
@@ -57,6 +65,7 @@ const NODE_KINDS = ['detector', 'array'] as const;
 const DRONE_CLASSES = ['fpv', 'mini', 'matrice'] as const;
 const FLIGHT_MODES = ['manual', 'gps'] as const;
 const PATH_KINDS = ['manual', 'hover', 'crossing', 'out_and_back', 'terrain_follow'] as const;
+const SHOOTER_KINDS = ['range', 'shooter'] as const;
 
 type Obj = Record<string, unknown>;
 
@@ -159,6 +168,13 @@ export function parseDrone(v: unknown): DroneSpec {
   return spec;
 }
 
+export function parseShooter(v: unknown): ShooterSpec {
+  const o = asObj(v, 'shooter');
+  const every = num(o, 'every_s', 'shooter');
+  if (every <= 0) fail('shooter.every_s must be positive');
+  return { id: num(o, 'id', 'shooter'), kind: oneOf(o, 'kind', SHOOTER_KINDS, 'shooter'), x: num(o, 'x', 'shooter'), y: num(o, 'y', 'shooter'), every_s: every };
+}
+
 function uniqueIds(items: { id: number }[], what: string): void {
   const seen = new Set<number>();
   for (const item of items) {
@@ -185,6 +201,8 @@ export function parseScenario(data: unknown): ScenarioFile {
   const drones = asArr(o.drones, 'drones').map(parseDrone);
   uniqueIds(nodes, 'node');
   uniqueIds(drones, 'drone');
+  const shooters = o.shooters === undefined ? [] : asArr(o.shooters, 'shooters').map(parseShooter);
+  uniqueIds(shooters, 'shooter');
 
   return {
     format: 'sonicmesh-scenario',
@@ -200,6 +218,7 @@ export function parseScenario(data: unknown): ScenarioFile {
     gateway: vec(o.gateway, 'gateway'),
     nodes,
     drones,
+    shooters,
     acoustics: parseAcoustics(o.acoustics),
   };
 }

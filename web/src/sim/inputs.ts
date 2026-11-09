@@ -1,4 +1,4 @@
-import type { DroneClass, DroneSpec, FlightMode, NodeKind, NodeSpec, PathSpec } from './scenario';
+import type { DroneClass, DroneSpec, FlightMode, NodeKind, NodeSpec, PathSpec, ShooterSpec } from './scenario';
 
 // Every change to world state is one of these. Each is logged with the tick it was applied at.
 export type Op =
@@ -13,6 +13,8 @@ export type Op =
   | { type: 'node_kind'; id: number; kind: NodeKind }
   | { type: 'node_remove'; id: number }
   | { type: 'gateway_move'; x: number; y: number }
+  | { type: 'shooter_add'; shooter: ShooterSpec }
+  | { type: 'shooter_remove'; id: number }
   | { type: 'truth'; on: boolean };
 
 export type LogEntry = Op & { tick: number };
@@ -35,6 +37,8 @@ const OP_TYPES: readonly Op['type'][] = [
   'node_kind',
   'node_remove',
   'gateway_move',
+  'shooter_add',
+  'shooter_remove',
   'truth',
 ];
 

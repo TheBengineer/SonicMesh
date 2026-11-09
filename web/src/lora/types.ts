@@ -89,6 +89,8 @@ export interface NodeView {
   beaconHeard: boolean;
   lastDetectionS: number;
   detectSpans: DetectSpan[];
+  // Recent shot onsets at this node, in sim seconds, oldest first.
+  shotTimesS: number[];
   // The best comb score this frame, which the detector compares with its threshold.
   peak: number;
   detectState: DetectState;

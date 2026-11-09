@@ -327,3 +327,21 @@ components:
     evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/docs/research/04-hardware-boundaries.md"
     upgrade: "ASSUMED to REAL with hardware in the loop, using a bench node over USB."
     bias: "Browser timing is not MCU timing."
+
+  - id: gunshot-source
+    name: Gunshots from a range or shooter
+    tag: ASSUMED
+    milestone: M1
+    summary: "A shot is a short N-wave crack and a low muzzle blast, peak 150 dB SPL at 1 m, fired every few seconds from a range or from a shooter placed on the map. It travels the same path as a drone's sound: distance, air absorption, terrain blocking and the ground reflection."
+    evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/web/src/acoustics/shot.ts"
+    upgrade: "ASSUMED to MODELLED with recorded shots from a range at known distances, fitted to the level and the blast tail."
+    bias: "The crack is under-sampled at 16 kHz, so its shape is approximate. Only one shot type, no echoes off buildings, no wind."
+
+  - id: impulse-onset
+    name: Shot onset detector at nodes
+    tag: STUB
+    milestone: M1
+    summary: "A level test on 1 ms windows against a slow background, which reports each shot it hears. It does not classify, so slams and fireworks would also count. The field node would run a classifier after it."
+    evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/web/src/detector/impulse.ts"
+    upgrade: "STUB to SAME CODE once the field classifier runs in the demo, with the look-alike tests from the plan."
+    bias: "Shots are the only impulsive sound in the scenes, so it never sees a false trigger here."

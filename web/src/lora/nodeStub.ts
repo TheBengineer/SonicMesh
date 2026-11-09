@@ -3,8 +3,10 @@
 import { createRng, nextFloat, nextU32, type Rng } from '../sim/rng';
 import type { DroneClass } from '../sim/scenario';
 import { gauss } from '../acoustics/dsp';
+import { FS } from '../acoustics/model';
 import { BEARING_SAMPLES, BearingTrack, estimateBearing } from '../detector/bearing';
 import { CombDetector, NODE_COMB_PARAMS } from '../detector/comb';
+import { ImpulseDetector } from '../detector/impulse';
 import { HEALTH_FIELDS } from '../protocol/messages';
 import type { DetectSpan, DetectState } from './types';
 
@@ -20,6 +22,10 @@ const PITCH_WINDOW = 300;
 const LINE_TOL = 0.13;
 // Spans kept for the debug lines; the waterfalls show well under a minute.
 export const MAX_DETECT_SPANS = 8;
+const MAX_SHOT_TIMES = 8;
+// The harmonic detector skips any frame that overlaps a shot and this long after it, so a shot cannot break or start a
+// drone track. A drone's track holds for about a second, so a quarter-second gap leaves it intact.
+const SHOT_MASK_S = 0.25;
 export const RANGE_SIGMA_M = 4;
 export const NLOS_P = 0.25;
 export const NLOS_MAX_M = 12;
@@ -178,6 +184,11 @@ export class NodeStub {
   neighboursHeard = 0;
   lastDetectionS = -1;
   readonly spans: DetectSpan[] = [];
+  // Recent shot onsets at this node, in sim seconds. Only the newest few are kept.
+  readonly shotTimesS: number[] = [];
+  private readonly impulse = new ImpulseDetector();
+  // Sample indices of recent shot onsets, for masking the harmonic detector.
+  private readonly shotSamples: number[] = [];
   lastBandDb = 0;
   // The best comb score this frame, which the detector compares with its threshold.
   peak = 0;
@@ -232,14 +243,36 @@ export class NodeStub {
     return null;
   }
 
-  // Runs the detector over any new audio, one frame per hop from the start of the mic's ring.
+  // Runs the impulse detector over any new audio and keeps the times of the shots it finds.
+  hearShots(ring: RingView): void {
+    for (const i of this.impulse.step(ring)) {
+      this.shotTimesS.push(i / FS);
+      if (this.shotTimesS.length > MAX_SHOT_TIMES) this.shotTimesS.shift();
+      this.shotSamples.push(i);
+    }
+  }
+
+  // Whether a frame starting at start and nFft long overlaps a shot or the time just after it.
+  private inShot(start: number, nFft: number): boolean {
+    const mask = Math.round(SHOT_MASK_S * FS);
+    return this.shotSamples.some((s) => start < s + mask && start + nFft > s);
+  }
+
+  private forgetShots(nFft: number): void {
+    const keep = this.cursor - nFft - Math.round(SHOT_MASK_S * FS);
+    while (this.shotSamples.length > 0 && this.shotSamples[0] < keep) this.shotSamples.shift();
+  }
+
+  // Runs the detector over any new audio, one frame per hop from the start of the mic's ring. Call hearShots first, so
+  // the frames that overlap a shot can be skipped.
   hear(ring: RingView): CombReading {
     const { comb, frame } = this;
     if (ring.written - this.cursor > ring.capacity) this.cursor = ring.written - comb.nFft;
     while (this.cursor + comb.nFft <= ring.written && ring.read(this.cursor, frame)) {
-      comb.step(frame);
+      if (!this.inShot(this.cursor, comb.nFft)) comb.step(frame);
       this.cursor += comb.hop;
     }
+    this.forgetShots(comb.nFft);
     return { on: comb.on, tracking: comb.q > 0, f0Hz: comb.f0Hz, peak: comb.peak };
   }
 

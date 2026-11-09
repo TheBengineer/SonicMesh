@@ -346,6 +346,7 @@ export class LoRaNetwork {
       const node = this.node(n.id);
       const ring = engine.micRing(key);
       if (!node || !ring) continue;
+      node.stub.hearShots(ring);
       const comb = node.stub.hear(ring);
       if (node.spec.kind === 'array') {
         const rings = ARRAY_OFFSETS.map((_, j) => engine.micRing(`${n.id}.${j}`)).filter((r) => r !== undefined);
@@ -899,6 +900,7 @@ export class LoRaNetwork {
       beaconHeard: node.beaconHeard,
       lastDetectionS: node.stub.lastDetectionS,
       detectSpans: node.stub.spans.map((s) => ({ ...s })),
+      shotTimesS: [...node.stub.shotTimesS],
       peak: node.stub.peak,
       detectState: node.stub.state,
       detections: node.stub.detections,

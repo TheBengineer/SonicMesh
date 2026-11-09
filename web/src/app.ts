@@ -30,13 +30,14 @@ import { LevelHistory, spanAt } from './ui/detectMarks';
 import { WaterfallStrip, type StripNode } from './ui/waterfalls';
 import { Timeline, type TimelineInfo } from './ui/timeline';
 import { parseInputLog, type LogEntry } from './sim/inputs';
+import { SHOOTER_EVERY_S } from './sim/shots';
 import { parseScenario, type DroneClass, type FlightMode, type NodeKind, type PathSpec, type ScenarioFile } from './sim/scenario';
 import type { Frame, InspectRequest, RotorTrace, SpectrumTrace } from './sim/protocol';
 import { SimHost } from './sim/simHost';
 import { Terrain } from './sim/terrain';
 import { createWorld, type DroneState, type World } from './sim/world';
 
-type Mode = 'select' | 'add-node' | 'add-drone';
+type Mode = 'select' | 'add-node' | 'add-drone' | 'gunshot';
 
 const CLICK_PX = 5;
 const DRAG_MIN_M = 0.5;
@@ -565,6 +566,12 @@ export function startApp(root: HTMLElement): void {
     }
     if (!hit || hit.target.kind !== 'terrain') return;
     const state = frameNow().state;
+    if (mode === 'gunshot') {
+      // Stays in gunshot mode, so several shooters can be placed in a row.
+      const id = nextId(state.shooters.map((sh) => sh.id));
+      host.apply({ type: 'shooter_add', shooter: { id, kind: 'shooter', x: hit.x, y: hit.y, every_s: SHOOTER_EVERY_S } });
+      return;
+    }
     if (mode === 'add-node') {
       const id = nextId(state.nodes.map((n) => n.id));
       const kind = need<HTMLSelectElement>(root, '#place-kind').value as NodeKind;
