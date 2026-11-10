@@ -83,7 +83,7 @@ export const DEFAULT_COMB_PARAMS: CombParams = {
   slewRatio: 1.3,
   gapFrames: 0,
   gapHarm: 0,
-  subGuard: false,
+  subGuard: true,
   gateHarm: 1,
   initFrames: 8,
   refFrames: 31,

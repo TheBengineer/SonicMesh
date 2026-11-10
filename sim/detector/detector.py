@@ -81,8 +81,9 @@ class Params:
     slew_ratio: float = 1.3  # max f0 change within one second of the track
     gap_frames: int = 0  # 0: a lost track resets its age (baseline). >0: a track re-found within this many hops
     #                      near its last f0 keeps its age and harmonic count (a short dropout does not restart the gate)
-    sub_guard: bool = False  # True: no sub-harmonic takeover while the track's own score is 0. In an impulse or gate-failed
-    #                          frame every score is 0 and 0 >= 0.85 * 0 would move the track to its lowest sub-harmonic
+    sub_guard: bool = True  # True: no sub-harmonic takeover while the track's own score is 0. When the gate fails at the
+    #                         track's candidate, 0 >= 0.85 * 0 would move the track to its lowest sub-harmonic. Default
+    #                         since doc 07 12.4g: held-out gateway Pd 0.18 -> 0.28 with false alarms unchanged
     gap_harm: int = 0  # 0: re-finding must be near the last f0. >0: also at a ratio a/b of the last f0, a and b up to this,
     #                    since the coarse search can settle on any harmonic of one source (needs gap_frames)
     gate_harm: int = 1  # the comb is kept only if one of the first gate_harm harmonics stands GATE_LOG above its flanks

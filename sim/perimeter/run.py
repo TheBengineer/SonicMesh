@@ -77,6 +77,8 @@ SEEDS = {
     "fresh": dict(cross=5050, master=8888, fa_rural=8000, fa_dense=9000),
     # round 3 (doc 07 section 11): new crossing and background seeds, never used by an earlier run. Folds 4-5 clips.
     "r3": dict(cross=12012, master=12013, fa_rural=12100, fa_dense=12200),
+    # round 4 (doc 07 section 12): the same, for sub_guard. Used by trials.py --seeds r4.
+    "r4": dict(cross=14012, master=14013, fa_rural=14100, fa_dense=14200),
 }
 THETAS = [0.10, 0.12, 0.14, 0.16, 0.18, 0.20, 0.23, 0.26, 0.30]
 # Node-to-node timing model (ASSUMED, from docs/protocol-v0.md 3a). Event superframe 500 ms, idle 4 s, backbone 500 ms
@@ -88,6 +90,9 @@ CONFIRM_BB_SF_S = 0.5
 CONFIRM_BB_AIR_S = 0.0385
 CONFIRM_CTRL_S = 0.05
 SUBSECTION = {"A": range(0, 4), "B": range(4, 9), "C": range(9, 13)}
+# Hours of the one bed that every node in a crossing cuts its background from. Rounds 1-4 used 0.25 h, where one event
+# clip reached several nodes at the same pitch and paired at the gateway with no drone at all (doc 07 section 12.4f).
+CROSS_BED_H = 2.0
 
 
 MASTER = None  # background bed for the crossing workers (set by the pool initializer)
@@ -115,7 +120,7 @@ def map_crossings(crossings, master, params_list, procs=6, ckpt=None):
     """run_crossing over a list of crossings in worker processes (each worker one BLAS thread), in crossing order.
 
     With ckpt (a directory), each crossing's result is written when it finishes; a rerun with the same directory
-    computes only the missing crossings. The crossings and parameters must be the same for a rerun."""
+    computes only the missing crossings. The crossings, parameters and bed must be the same for a rerun."""
     import pickle
     from multiprocessing import Pool
 
@@ -566,10 +571,10 @@ def main():
         args.hours = args.hours or 0.25
         args.dense_hours = args.dense_hours or 0.1
     if args.tune or args.ablate:
-        master, _ = rural_scene(1234, 0.25, (1, 2, 3))  # background events from folds 1-3 only
+        master, _ = rural_scene(1234, CROSS_BED_H, (1, 2, 3))  # background events from folds 1-3 only
         out = tune(args, master) if args.tune else ablate(args, master)
     else:
-        master, _ = rural_scene(SEEDS[args.seeds]["master"], 0.25, (4, 5))
+        master, _ = rural_scene(SEEDS[args.seeds]["master"], CROSS_BED_H, (4, 5))
         out = held_out(args, master)
     if args.json:
         Path(args.json).write_text(json.dumps(out, indent=1, default=float))

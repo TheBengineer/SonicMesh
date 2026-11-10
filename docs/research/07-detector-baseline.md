@@ -21,6 +21,12 @@ round-2 setting. F2 is kept as the rural candidate and is not made the default (
 
 ## Answers in brief
 
+00. **Round 4 (section 12, 2026-11-06).** A bug: sub-harmonic takeover fired whenever a track's own score was 0, moving the
+   track to a sub-harmonic where it then lost its hits. On a new draw (folds 4-5 clips, 191 crossings below 100 m), a guard
+   (`sub_guard`) raises gateway Pd from 0.15 to 0.23, all of it FPV (0.47 to 0.71). Mini and matrice stay at 0. Rural gateway alarms
+   are unchanged at 5 and 5 in 223 node-hours (1.67 per km-day, bound 3.5), and node alarms rise 61 %. It meets the bar set beforehand.
+   It is not yet the default, and the targets are still not met.
+
 0. **Round 3 (section 11, 2026-11-05).** Frame length, neighbour matching, floor and gate retests, and a new draw, all
    run in this round with the current code. Longer frames raise line SNR
    for mini and matrice under the pink ambient (matrice node Pd under pink 0.25 at 1024 samples, 1.00 at 2048; mini 0.22,
@@ -875,6 +881,289 @@ uv run sim/perimeter/run.py --part fa --seeds r3 --hours 6 --dense-hours 0.5 --c
 ```
 
 Round-2 settings: add `--n-fft 1024 --hop 512 --theta 0.10` to the tune and trials commands.
+
+## 12. Round 4, 2026-11-06: why tracks break on a mini
+
+**Question.** In the web demo, a mini-class drone is audible on a node's mic and its comb score is above the threshold,
+but the node often does not detect it. Why?
+
+### 12.1 Trace in the web demo
+
+Mini alone at 20 m clearance, 15 m/s, nodes within 150 m, three seeds, using the port in `web/src/detector/comb.ts`. The
+demo's terrain and propagation are not the perimeter runner's, so these figures explain the mechanism and do not estimate
+Pd. Temporary test code; not kept in the repo.
+
+- While arming, the only rule still unmet was the age rule (`age_min`, 62 hops, 2 s) in all samples on the two seeds checked.
+  The harmonic share was not the limit (median 1.00).
+- Tracks are short: median age at loss 6, 7 and 10 hops, then a new track about 1 hop later.
+- Of 131 new tracks after a loss, 4 came back near the same pitch, 71 at another low-integer ratio and 56 at no such ratio.
+  This is why `gap_frames` of 16, 31 and 62 changed nothing here, matching section 10.4.
+- Misses inside a track (three seeds, baseline, 958 in all): 880 had a zero score everywhere near the track, 22 had a score
+  below theta, 56 failed the harmonic check, and 0 were impulse frames. So the fundamental gate, not impulse rejection,
+  causes nearly all of them. With the guard the zero-score misses fall to 731 and hits rise from 2,203 to 2,430.
+
+### 12.2 The bug
+
+`S[j] >= SUB_RATIO * S[index]` is true for any candidate when `S[index]` is 0. A gate failure at the track's own candidate
+therefore moved the track to its lowest valid sub-harmonic, and the next frames searched around the wrong pitch. It has been
+present in `detector.py` and the port throughout, so rounds 1 to 3 were all measured with it. `sub_guard` (default off, so
+`Params()` is unchanged) blocks the takeover while the track's own score is 0. `gap_harm` (default off) also lets a re-found
+track keep its age at a ratio a/b of its last pitch, with a and b up to the limit.
+
+### 12.3 Trials, folds 1-3
+
+Crossings: the 120 tuning crossings, 96 below 100 m. Pd is below 100 m. The baseline matches section 10.4 exactly.
+
+| Variant | Node Pd | Gateway Pd | FPV node / gw (n=37) | Mini node / gw (n=25) | Matrice node / gw (n=34) | Node alarms (13 node-h) | Gateway events |
+|---|---|---|---|---|---|---|---|
+| Baseline, theta 0.10 | 0.68 | 0.19 | 0.92 / 0.49 | 0.48 / 0.00 | 0.56 / 0.00 | 21 | 0 |
+| `sub_guard` | 0.75 | 0.27 | 1.00 / 0.70 | 0.60 / 0.00 | 0.59 / 0.00 | 32 | 0 |
+| guard + gap 1 s | 0.77 | 0.27 | 1.00 / 0.70 | 0.60 / 0.00 | 0.65 / 0.00 | 37 | 1 |
+| guard + gap + `gap_harm` 4 | 0.81 | 0.29 | 1.00 / 0.73 | 0.68 / 0.04 | 0.71 / 0.00 | 47 | 2 |
+| guard + gap + `gap_harm` 6 | 0.83 | 0.30 | 1.00 / 0.76 | 0.72 / 0.04 | 0.74 / 0.00 | 61 | 2 |
+| gap + `gap_harm` 4, no guard | 0.72 | 0.22 | 1.00 / 0.57 | 0.48 / 0.00 | 0.59 / 0.00 | 28 | 1 |
+
+Longer false-alarm runs, baseline against `sub_guard`:
+
+| Bed | Size | Node alarms | Gateway events | Gateway per km-day |
+|---|---|---|---|---|
+| Rural | 78 node-hours | 160 against 233 (49 and 72 per node-day) | 2 and 2 | 1.90 and 1.90 |
+| Dense stress | 6.5 node-hours | 287 against 320 | 46 and 48 | 526 and 549 |
+
+`gate_harm` 2 on the same folds, 96 crossings below 100 m and 78 node-hours rural:
+
+| Variant | Node Pd | Gateway Pd | FPV gw | Mini gw | Matrice gw | Node alarms | Gateway events |
+|---|---|---|---|---|---|---|---|
+| `gate_harm` 2 | 0.77 | 0.25 | 0.59 | 0.08 | 0.00 | 227 | 3 |
+| `gate_harm` 2 + guard | 0.81 | 0.30 | 0.73 | 0.04 | 0.03 | 291 | 4 |
+
+### 12.4 Held-out test of `sub_guard`
+
+The bar, set before any held-out result: gateway Pd below 100 m rises, rural gateway alarms do not rise, and dense gateway alarms do
+not clearly rise. Seeds `r4` were never used before; the clips are folds 4-5 again, so this is a new draw and not a clean test set.
+
+| Bed or crossings | Baseline | `sub_guard` |
+|---|---|---|
+| Gateway Pd below 100 m (n=191) | 0.15 | 0.23 |
+| FPV node / gateway (n=62) | 1.00 / 0.47 | 1.00 / 0.71 |
+| Mini node / gateway (n=64) | 0.48 / 0.00 | 0.62 / 0.00 |
+| Matrice node / gateway (n=65) | 0.28 / 0.00 | 0.37 / 0.00 |
+| Rural, 223 node-hours: node alarms | 347 (37 per node-day) | 558 (60 per node-day) |
+| Rural: gateway events (per km-day) | 5 (1.67) | 5 (1.67) |
+| Dense, 6.5 node-hours: gateway events (per km-day) | 42 (480) | 54 (617) |
+
+**Result: the bar is met, narrowly on the dense bed.** A rise of 42 to 54 is about one standard deviation, and the tuning folds gave 46 to
+48, so it is not a clear rise, but it is in the wrong direction. Five events bound the rural rate at about 3.5 per km-day (95 %), so
+neither setting shows the target of 1. The 61 % rise in node alarms means more false pairs may appear with more nodes or closer spacing.
+
+**`sub_guard` stays off until the owner decides.** Changing it also changes the demo and needs the fixtures rechecked.
+
+**`gap_harm` is not adopted.** It adds 0.02 to 0.03 of gateway Pd and is where gateway events first appear in the short bed.
+
+**`gate_harm` 2 is not adopted.** It barely moves the mini and matrice at the gateway, and adds alarms on top of the guard's.
+
+**The mini and matrice gateway problem is not solved.** Their node Pd improves, but the gateway needs two nodes and stays near 0.
+
+### 12.4b Ground-level mic, in simulation
+
+`sim/experiments/ground_mic_check.py`, the 120 tuning crossings, mic at 0.02 m with a complete reflection against 0.3 m with gamma 0.7, and
+the bed raised 3 dB for the boundary gain on diffuse noise. With `sub_guard`, below 100 m:
+
+| Mic | Node Pd | Gateway Pd | FPV gw (n=37) | Mini node / gw (n=25) | Matrice node / gw (n=34) |
+|---|---|---|---|---|---|
+| 0.3 m | 0.75 | 0.27 | 0.70 | 0.60 / 0.00 | 0.59 / 0.00 |
+| Ground | 0.77 | 0.34 | 0.86 | 0.64 / 0.00 | 0.62 / 0.03 |
+
+Without the guard, matrice node Pd falls from 0.56 to 0.41 at the ground, though gateway Pd rises from 0.19 to 0.23. The gain is
+mostly FPV, on few crossings, with no false-alarm run. Geometry only: no grass, rain, mud or wind benefit. Worth a field test.
+
+### 12.4c Rotor-noise modulation on real recordings
+
+Sonar's DEMON method: a comb on the envelope spectrum of a higher band. `sim/experiments/demon_check2.py` scales real hover clips to range
+and mixes them into the rural bed (folds 1-3). Threshold 0.1 % of 2 s bed windows, each pitch scored against its own bed statistics, 40
+windows per cell. The first version (`demon_check.py`) failed its control until pitches were scored separately. Detector = `detector.py` with
+`sub_guard`, 8 s of bed then 20 s of clip, 6 trials per cell, on in 1 of 24 bed-only trials. The two are on different scales and compare
+only roughly. Best envelope band shown, hits below; ranges with mics M1 / M3 / M5 / M7 / M9:
+
+| Clip, range | Plain comb, same windows | Envelope 0.5-2 kHz | Real detector (of 6) |
+|---|---|---|---|
+| Matrice 300, 100 m | 0 / 0 / 0 / 0.03 / 0 | 0.12 / 0 / 0.17 / 0.80 / 0.72 | 2 / 2 / 6 / 6 / 6 |
+| Matrice 300, 150 m | all 0 | 0 / 0 / 0.05 / 0.50 / 0.50 | 0 / 1 / 6 / 2 / 3 |
+| Matrice 300, 200 m | all 0 | 0 / 0 / 0 / 0.20 / 0.10 | 1 / 0 / 2 / 1 / 1 |
+| Mini 3 Pro, 25 m | all 0 | all 0 (1-3 kHz: 0 / 0 / 0.12 / 0.15 / 0) | 1 / 0 / 4 / 1 / 1 |
+| Mini 3 Pro, 50 m and beyond | about 0 | about 0 | about 0 |
+| Type `Yn`, 50 m | 0.45 / 0.93 / 0.93 / 0.88 / 0.33 | 0.12 / 0.03 / 0.07 / 0.33 / 0.45 | 5 / 6 / 6 / 6 / 4 |
+
+- **The signal is real.** The envelope finds the same pitch as the tone on every mic: about 93 Hz (the Matrice line in doc 03) and 153 Hz for `Yn`. The
+  two mics on one side are stronger, in both the envelope and the plain comb, which is more like directivity than one bad mic.
+- **It does not extend range beyond the real detector.** It does not reach the Mini either. It is not adopted as a detector.
+- **It may be a useful cheap feature for the classifier.** Rotor blades show at the same pitch in tone and envelope, though real engines may do the same. Untested.
+
+**Real clips against the simulator's levels** (100 Hz to 4 kHz, at 1 m, ASSUMED calibration, mics M1 / M3 / M5 / M7 / M9):
+
+| Clip | Real, dB | Simulator, dB |
+|---|---|---|
+| Matrice 300 | 81 / 82 / 84 / 85 / 83 | 80 |
+| Mini 3 Pro | 66 / 69 / 70 / 69 / 65 | 80 |
+| `Yn` | 75 / 79 / 81 / 80 / 76 | no class |
+
+The simulated Mini is 10 to 15 dB louder than this recording, so real Mini results may be worse than simulated ones. The real Matrice clip is detected to 100 to 150 m on most
+mics, better than the synthetic matrice, so the synthetic source may be pessimistic for it. These clips hover, with no ground image, turbulence or Doppler, and the calibration
+is ASSUMED, so this is a reason to check the sources, not a measured range.
+
+### 12.4d Node spacing
+
+**Read 12.4f first.** The 1+, 2+ and 3+ shares below count background locks too, and the mini and matrice rows are mostly
+background. The table is kept as run.
+
+`sim/experiments/spacing_check.py`, the same 96 tuning crossings below 100 m at every spacing, with `sub_guard`. "2+" and "3+" are crossings heard by at least
+that many nodes within the runner's truth window. Cost is detector nodes only, at $30 each. FPV n=37, mini n=25, matrice n=34.
+
+| Spacing | Nodes per km | Cost per km | FPV 3+ / gw | Mini 1+ / 2+ / gw | Matrice 1+ / 2+ / gw | All gw |
+|---|---|---|---|---|---|---|
+| 350 m | 2.9 | $86 | 0.59 / 0.70 | 0.60 / 0.20 / 0.00 | 0.59 / 0.03 / 0.00 | 0.27 |
+| 250 m | 4.0 | $120 | 0.95 / 0.86 | 0.76 / 0.36 / 0.00 | 0.79 / 0.21 / 0.03 | 0.34 |
+| 175 m | 5.7 | $171 | 1.00 / 0.95 | 0.88 / 0.40 / 0.12 | 0.82 / 0.44 / 0.00 | 0.40 |
+| 120 m | 8.3 | $250 | 1.00 / 1.00 | 0.92 / 0.72 / 0.24 | 0.91 / 0.50 / 0.09 | 0.48 |
+| 80 m | 12.5 | $375 | 1.00 / 1.00 | 1.00 / 0.88 / 0.52 | 1.00 / 0.88 / 0.15 | 0.57 |
+
+- **FPV:** three nodes on nearly every crossing from 250 m, and gateway 0.95 from 175 m.
+- **Mini and matrice:** 80 m gets two nodes on 88 % of crossings, but that is over four times the nodes of 350 m, and the simulated mini is 10 to 15 dB louder than the real clip (12.4c).
+- **Two nodes is not enough to reach the gateway.** At 80 m, matrice reaches 2+ on 0.88 and the gateway on 0.15. Mini is 0.88 and 0.52. FPV does not show this gap.
+  The cause is not yet measured.
+- **Not a choice of spacing yet.** No false-alarm run at any spacing, and false alarms per km rise with nodes per km. The bed is independent per node, which flatters close spacing, because real
+  nearby nodes share sound. Tuning crossings, small n, no held-out draw.
+
+### 12.4e Why two nodes do not make a gateway pair
+
+**Read 12.4f first.** Most of the mini and matrice "heard by 2+" crossings here are background locks, so these causes describe
+background as much as the drone.
+
+`sim/experiments/gap_check.py` reruns 12.4d with `sub_guard` and gives the same gateway counts. For each mini or matrice crossing below 100 m
+heard by 2+ nodes with no gateway pair, the first cause that applies: **apart** (no two detecting nodes are neighbours; the gateway pairs
+neighbours only), **time** (neighbours, but no onsets within 30 s), **f0** (within 30 s, but the pitch rule fails).
+
+| Spacing | Mini: 2+ / gw / missed | Mini apart / time / f0 | Matrice: 2+ / gw / missed | Matrice apart / time / f0 |
+|---|---|---|---|---|
+| 350 m | 5 / 0 / 5 | 1 / 1 / 3 | 1 / 0 / 1 | 0 / 0 / 1 |
+| 250 m | 9 / 0 / 9 | 1 / 1 / 7 | 7 / 1 / 6 | 2 / 1 / 3 |
+| 175 m | 10 / 3 / 7 | 1 / 2 / 4 | 15 / 0 / 15 | 9 / 2 / 4 |
+| 120 m | 18 / 6 / 12 | 5 / 1 / 6 | 17 / 3 / 14 | 10 / 1 / 3 |
+| 80 m | 22 / 13 / 9 | 2 / 0 / 7 | 30 / 5 / 25 | 11 / 3 / 11 |
+
+Over all spacings, the 103 misses split 49 f0, 42 apart, 12 time.
+
+- **The pitch failures are not related harmonics.** Of 49, the lines rule (ratios up to 3 with two shared lines) would pass 3, the
+  median f0 over each lock instead of the onset f0 would pass 14, and two lines at the same absolute frequency at any ratio would pass 1.
+  A wider related-harmonic rule would not close this gap.
+- **The matrice locks on single high harmonics.** Onset f0 as a harmonic of the 100 Hz blade-pass frequency, at 80 m: 21 at 1, then 10, 5,
+  9 and 7 (21, 16, 14, 11), and 27 of 118 at no harmonic or sub-harmonic within 8 %. Two nodes that each take a different upper line as the
+  fundamental report pitches that no small-ratio rule can join, for example 700 Hz against 1,000 Hz. Mini onsets spread over harmonics 1 to 4
+  and 'other'. FPV locks mostly at its fundamental and never misses here.
+- **"Apart" is the matrice's main cause at 175 and 120 m.** The detecting nodes are not neighbours. Whether the middle node missed, or one of the
+  locks is the bed rather than the drone, is not measured: the onset counts are not checked against the source.
+- **What would help, untested:** a detector that reports the fundamental, not a lone upper line, perhaps by preferring the lowest f0 that explains
+  the lines, which is the job pitch tracking (approved) would take on; and allowing a pair across one silent node.
+
+### 12.4f Correction: background inside the crossing window
+
+`sim/experiments/silent_check.py` runs the 12.4d crossings with the drone turned down by 200 dB. Everything detected is then the bed.
+With `sub_guard`, below 100 m:
+
+| Spacing | Class | 2+ nodes, silent | 2+ nodes, drone (12.4d) | Gateway, silent | Gateway, drone (12.4d) |
+|---|---|---|---|---|---|
+| 350 m | FPV | 0.16 | 0.89 | 0.05 | 0.70 |
+| 350 m | Mini | 0.12 | 0.20 | 0.00 | 0.00 |
+| 350 m | Matrice | 0.15 | 0.03 | 0.00 | 0.00 |
+| 175 m | Mini | 0.36 | 0.40 | 0.00 | 0.12 |
+| 175 m | Matrice | 0.41 | 0.44 | 0.06 | 0.00 |
+| 80 m | FPV | 0.81 | 1.00 | 0.08 | 1.00 |
+| 80 m | Mini | 0.64 | 0.88 | 0.04 | 0.52 |
+| 80 m | Matrice | 0.74 | 0.88 | 0.15 | 0.15 |
+
+The class only sets the flight path and window length (mini windows are shorter) when the drone is silent.
+
+- **Node counts are not drone detections.** A crossing window is about 60 to 75 s, and at close spacing a dozen nodes listen through it, so ordinary
+  node alarms fill the 1+, 2+ and 3+ shares. The rate fits the long false-alarm runs: about 4 per node-hour here against 3 in 12.3.
+- **Not detector start-up.** Of 277 background onsets at 80 m, 172 come more than 40 s after their node started, and 18 in the first 10 s.
+- **The shared bed inflates the gateway.** Every node in a crossing cuts its bed from one 0.25 h recording, so one event clip can reach several
+  nodes at the same pitch and pass the f0 rule. With a 2 h bed (146 events), the 80 m silent gateway falls to FPV 0.00, mini 0.04 and matrice 0.03,
+  from 0.08, 0.04 and 0.15, and onsets in the window from 277 to 137. Every crossing run in this report uses the 0.25 h bed, so mini and matrice
+  gateway Pd of a few hundredths elsewhere in it is at chance level. FPV results and the 350 m conclusions stand: the silent gateway there is 0.00 to 0.05.
+- **What changes.** The matrice shows no detection above background at any spacing. The mini is clearly above background only at 80 m (0.52 against
+  0.04). FPV is unaffected. The 12.4e causes mostly describe pairs of background locks, which is also why the next test failed.
+
+**Reporting the fundamental (not adopted).** `sim/experiments/low_f0_check.py` keeps detection unchanged and, at each onset, replaces the reported f0
+with the locked f0 / k that puts at least 75 % of the lines in the last second on its harmonics. At 80 m on 32 crossings, gateway Pd fell: mini 6 to 3 of 9,
+matrice 0 to 1 of 10, FPV 7 of 7 both. The lines at matrice onsets are seldom a 100 Hz series (for example 145, 296 and 454 Hz, a bed source), and at
+FPV onsets bed lines pull the estimate to sub-harmonics. A first version, the highest f0 on the whole grid, was worse.
+
+**Rerun with a 2 h bed.** `spacing_check.py --bed-hours 2` and `silent_check.py --bed-hours 2`, the same crossings, `sub_guard`, below 100 m.
+Gateway Pd with the drone and with it silent (FPV n=37, mini n=25, matrice n=34):
+
+| Spacing | Cost per km | FPV gw / silent | Mini gw / silent | Matrice gw / silent | FPV 3+ nodes | Mini 2+ / silent | Matrice 2+ / silent |
+|---|---|---|---|---|---|---|---|
+| 350 m | $86 | 0.81 / 0.00 | 0.04 / 0.00 | 0.00 / 0.00 | 0.62 | 0.12 / 0.04 | 0.06 / 0.03 |
+| 250 m | $120 | 0.97 / 0.00 | 0.08 / 0.00 | 0.03 / 0.00 | 0.97 | 0.24 / 0.08 | 0.12 / 0.15 |
+| 175 m | $171 | 0.95 / 0.03 | 0.04 / 0.04 | 0.03 / 0.03 | 0.97 | 0.36 / 0.12 | 0.09 / 0.15 |
+| 120 m | $250 | 1.00 / 0.00 | 0.32 / 0.00 | 0.03 / 0.06 | 1.00 | 0.72 / 0.12 | 0.29 / 0.24 |
+| 80 m | $375 | 1.00 / 0.00 | 0.48 / 0.04 | 0.15 / 0.03 | 1.00 | 0.88 / 0.36 | 0.56 / 0.47 |
+
+- **FPV:** gateway 0.81 at today's 350 m and 0.97 at 250 m, above the 0.70 and 0.86 of 12.4d. The short bed cost FPV too.
+- **Mini:** above background from 120 m (8 of 25) and at 80 m (12 of 25). At 175 m and wider it is at background.
+- **Matrice:** nothing above background except perhaps 80 m (5 of 34 against 1 of 34). Its 2+ counts match the silent run at every spacing.
+- **Node counts still need the silent column.** Even with the longer bed, a crossing window collects background node alarms, so 1+, 2+ and 3+ are
+  only meaningful against the silent run.
+- **Still open:** no false-alarm run per spacing, tuning crossings only, small n, simulated sources (the simulated mini is 10 to 15 dB louder than the real clip).
+  Every crossing table before 12.4g used the 0.25 h bed and carries the same bias.
+
+### 12.4g Baselines with a 2 h crossing bed
+
+`run.py` now sets `CROSS_BED_H = 2.0` for the crossing bed (`trials.py --bed-hours 0.25` reproduces rounds 1-4). False-alarm runs draw a fresh
+scene per node and never used the shared bed, so their numbers stand; these reruns are crossings only (`trials.py --hours 0`). The 0.25 h rerun
+reproduces 12.3 exactly (0.19 and 0.27, and every class). Gateway Pd below 100 m, node Pd in brackets:
+
+| Draw | Variant | Gateway Pd, 0.25 h | Gateway Pd, 2 h | FPV gw, 2 h | Mini gw (node), 2 h | Matrice gw (node), 2 h |
+|---|---|---|---|---|---|---|
+| Folds 1-3, 96 | Baseline | 0.19 | 0.20 | 0.49 | 0.04 (0.52) | 0.00 (0.38) |
+| Folds 1-3, 96 | `sub_guard` | 0.27 | 0.32 | 0.81 | 0.04 (0.68) | 0.00 (0.50) |
+| Folds 1-3, 96 | `gate_harm` 2 | 0.25 | 0.21 | 0.51 | 0.04 (0.56) | 0.00 (0.44) |
+| Folds 1-3, 96 | `gate_harm` 2 + guard | 0.30 | 0.30 | 0.73 | 0.08 (0.68) | 0.00 (0.47) |
+| `r4` held out, 191 | Baseline | 0.15 | 0.18 | 0.53 | 0.02 (0.56) | 0.00 (0.35) |
+| `r4` held out, 191 | `sub_guard` | 0.23 | 0.28 | 0.81 | 0.03 (0.66) | 0.02 (0.38) |
+
+- **`sub_guard` holds up, and by more.** Held-out gateway Pd 0.18 to 0.28, FPV 0.53 to 0.81. The false-alarm side of the bar is unchanged from
+  12.4 (rural gateway 5 to 5, dense 42 to 54).
+- **`gate_harm` 2 adds nothing** on top of the guard (0.30 against 0.32).
+- **Matrice node Pd is at background.** With the drone silent at 350 m, 1+ nodes detect in 0.35 of matrice windows (12.4f), against node Pd 0.35 to
+  0.50 here. Mini node Pd (0.52 to 0.68) is above its silent 0.24. Node Pd needs the silent figure beside it from now on.
+- Mini and matrice gateway Pd stay at 0.00 to 0.08 at 350 m spacing.
+
+### 12.5 Other findings from the demo
+
+- A single setting and seed is not enough there: a matrice at 40 m with an FPV flying scored 4 % under 75 m in one run and 89 %
+  in another where only the FPV's height differed. Results near the threshold move a lot with small changes.
+- Empty scenes are not always clean. In 120 s runs on six seeds, one node held a long wandering lock on one seed at baseline,
+  and on two with the guard, starting in the first few seconds. The cause is not established.
+- Two drones of one class join into one bogie, since bogies are formed from pitch and neighbouring nodes. Two FPVs shared one in
+  50 of 53 samples, and the single estimated area then fits neither.
+
+**Reproduce:**
+
+```
+uv run sim/perimeter/trials.py --group lock --hours 1 --crossings 120 --procs 4 --json <path>
+uv run sim/perimeter/trials.py --group guard --hours 6 --crossings 120 --procs 4 --json <path>
+uv run sim/perimeter/trials.py --group guard --bed dense --hours 0.5 --crossings 12 --procs 4 --json <path>
+uv run sim/perimeter/trials.py --group gate2 --hours 6 --crossings 120 --procs 4 --json <path>
+uv run sim/perimeter/trials.py --group guard --seeds r4 --hours 17.15 --crossings 240 --ckpt CK --json <path>
+uv run sim/perimeter/trials.py --group guard --seeds r4 --bed dense --hours 0.5 --crossings 12 --ckpt CK --json <path>
+uv run sim/experiments/ground_mic_check.py --crossings 120 --procs 4 --json <path>
+```
+
+**Adopted 2026-11-10.** `sub_guard` is now the default in `sim/detector/detector.py` and `web/src/detector/comb.ts`,
+with the parity fixture regenerated. The trial groups pin `sub_guard=False` in their baseline row, so the commands
+above still reproduce the tables. The fixture's three explicit `sub_guard` cases now run with it off, so both paths
+stay covered.
 
 ## Sources
 
