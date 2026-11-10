@@ -44,6 +44,8 @@ export const RANGING_BW = 500_000;
 export const ALERT_START_S = 0.25;
 export const ALERT_SLOT_S = 0.16;
 export const ALERT_SLOTS = 4;
+// Shots a node keeps waiting to send. Older ones are dropped first.
+const MAX_SHOT_QUEUE = 8;
 export const SCHED_START_S = 0.9;
 export const SCHED_SLOT_S = 0.22;
 export const SCHED_SLOTS = 14;
@@ -107,6 +109,9 @@ interface NetNode {
   beaconRssi: number;
   beaconSnr: number;
   pendingAlert: PendingAlert | null;
+  // Onsets heard but not yet sent as SHOT, oldest first, and the newest onset already queued.
+  shotQueue: number[];
+  lastShotS: number;
   snippetRequested: boolean;
   health: HealthView | null;
   lastHealthS: number | null;
@@ -277,6 +282,8 @@ export class LoRaNetwork {
       beaconRssi: -160,
       beaconSnr: -30,
       pendingAlert: null,
+      shotQueue: [],
+      lastShotS: -Infinity,
       snippetRequested: false,
       health: null,
       lastHealthS: null,
@@ -317,6 +324,8 @@ export class LoRaNetwork {
           beaconRssi: -160,
           beaconSnr: -30,
           pendingAlert: null,
+          shotQueue: [],
+          lastShotS: -Infinity,
           snippetRequested: false,
           health: null,
           lastHealthS: null,
@@ -399,6 +408,12 @@ export class LoRaNetwork {
     this.duty.nowS = tS;
     for (const node of this.nodes) {
       node.stub.update(tS, node.lastObs);
+      for (const h of node.stub.shots) {
+        if (h.tS <= node.lastShotS) continue;
+        node.lastShotS = h.tS;
+        node.shotQueue.push(Math.round(h.tS * 1000));
+        if (node.shotQueue.length > MAX_SHOT_QUEUE) node.shotQueue.shift();
+      }
       // In event mode detections go out as DETECT in the event slots; only idle needs a contention alert.
       if (this.mode === 'idle' && node.stub.lastDetectionS === tS && node.pendingAlert === null) {
         node.pendingAlert = { detection: this.detectionFor(node) };
@@ -529,6 +544,7 @@ export class LoRaNetwork {
       for (const node of this.nodes) {
         if (!heard.has(node.spec.id)) continue;
         if (node.pendingAlert) this.scheduleAlert(node, startS, channel, waves, txs);
+        if (node.shotQueue.length > 0) this.scheduleShot(node, startS, channel, waves, txs);
       }
       let idx = 0;
       for (const id of plan.health) {
@@ -579,6 +595,7 @@ export class LoRaNetwork {
       const node = this.node(tx.wave.tx);
       if (!node) continue;
       this.logGatewayMessage(tx.message, tx.wave.tx, tx.packet.startS, 'received', tx.packet.id, tx.packet.frameHex);
+      if (tx.message.type === 'SHOT') node.shotQueue.shift();
       if (tx.message.type === 'DETECT_START' || tx.message.type === 'DETECT') {
         alertDecoded = true;
         this.eventLastS = Math.max(this.eventLastS, tx.packet.startS);
@@ -738,6 +755,16 @@ export class LoRaNetwork {
     const frame = encodeFrame(msg, node.spec.id, { fullCounter: this.fullCounter });
     const e = s + airtime(IDLE_SF, IDLE_BW, frame.length);
     txs.push(this.makeTx(node.spec.id, msg, frame, s, e, IDLE_SF, IDLE_BW, channel, `alert ${slot + 1}`, waves));
+  }
+
+  // One SHOT for the oldest queued onset, in a random alert slot. The queue keeps it until the gateway decodes it.
+  private scheduleShot(node: NetNode, startS: number, channel: ChannelSpec, waves: Wave[], txs: TxPlan[]): void {
+    const slot = Math.floor(node.stub.nextFloat() * ALERT_SLOTS);
+    const msg: Message = { type: 'SHOT', tMs: node.shotQueue[0] };
+    const s = startS + ALERT_START_S + slot * ALERT_SLOT_S;
+    const frame = encodeFrame(msg, node.spec.id, { fullCounter: this.fullCounter });
+    const e = s + airtime(IDLE_SF, IDLE_BW, frame.length);
+    txs.push(this.makeTx(node.spec.id, msg, frame, s, e, IDLE_SF, IDLE_BW, channel, `shot ${slot + 1}`, waves));
   }
 
   private scheduleHealth(node: NetNode, s: number, channel: ChannelSpec, waves: Wave[], txs: TxPlan[]): void {
@@ -984,7 +1011,7 @@ export class LoRaNetwork {
   // Compact, deterministic state for replay. The packet log is not part of the hash; the counters and
   // node stubs that decide future packets are.
   stateHash(): string {
-    const nodes = this.nodes.map((n) => `${n.spec.id}:${n.spec.kind}:${n.spec.x.toFixed(3)}:${n.spec.y.toFixed(3)}:${n.stub.stateHash()}:${n.beaconHeard ? 1 : 0}:${n.pendingAlert ? 1 : 0}:${n.snippetRequested ? 1 : 0}:${n.lastHealthS ?? '-'}:${n.healthIdleAt.toFixed(3)}:${n.beaconRssi.toFixed(4)}:${n.beaconSnr.toFixed(4)}:${n.txSeconds.toFixed(6)}`).join('|');
+    const nodes = this.nodes.map((n) => `${n.spec.id}:${n.spec.kind}:${n.spec.x.toFixed(3)}:${n.spec.y.toFixed(3)}:${n.stub.stateHash()}:${n.beaconHeard ? 1 : 0}:${n.pendingAlert ? 1 : 0}:${n.shotQueue.join(',')}:${n.snippetRequested ? 1 : 0}:${n.lastHealthS ?? '-'}:${n.healthIdleAt.toFixed(3)}:${n.beaconRssi.toFixed(4)}:${n.beaconSnr.toFixed(4)}:${n.txSeconds.toFixed(6)}`).join('|');
     return fnv1a(
       JSON.stringify({
         mode: this.mode,

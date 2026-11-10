@@ -10,11 +10,12 @@ export const MESSAGE_TYPES = [
   'RANGING_RESULT',
   'JOIN',
   'ACK',
+  'SHOT',
 ] as const;
 
 export type MessageType = (typeof MESSAGE_TYPES)[number];
 
-export type MessageTypeCode = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
+export type MessageTypeCode = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 
 export function typeCode(type: MessageType): MessageTypeCode {
   return MESSAGE_TYPES.indexOf(type) as MessageTypeCode;
@@ -142,6 +143,12 @@ export interface AckMessage {
   result: number;
 }
 
+// A node heard a gunshot. tMs is the onset in whole sim milliseconds.
+export interface ShotMessage {
+  type: 'SHOT';
+  tMs: number;
+}
+
 export type Message =
   | BeaconMessage
   | DetectStartMessage
@@ -150,7 +157,8 @@ export type Message =
   | HealthMessage
   | RangingResultMessage
   | JoinMessage
-  | AckMessage;
+  | AckMessage
+  | ShotMessage;
 
 // Field names, widths and provenance for the 152-bit report in doc 06.
 export const HEALTH_FIELDS = [
@@ -295,6 +303,9 @@ export function encodePayload(msg: Message): Uint8Array {
       w.u(msg.commandId, 8);
       w.u(msg.result, 8);
       break;
+    case 'SHOT':
+      w.u(msg.tMs, 32);
+      break;
   }
   return w.finish();
 }
@@ -376,5 +387,7 @@ export function decodePayload(type: MessageType, payload: Uint8Array): Message {
       };
     case 'ACK':
       return { type, commandId: r.u(8), result: r.u(8) };
+    case 'SHOT':
+      return { type, tMs: r.u(32) };
   }
 }

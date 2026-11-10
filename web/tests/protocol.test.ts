@@ -114,6 +114,8 @@ function randomMessage(type: MessageType, rnd: () => number): Message {
       };
     case 'ACK':
       return { type, commandId: u(8), result: u(8) };
+    case 'SHOT':
+      return { type, tMs: u(32) };
   }
 }
 
@@ -157,6 +159,7 @@ describe('protocol v0 codec', () => {
       'RANGING_RESULT',
       'JOIN',
       'ACK',
+      'SHOT',
     ];
     for (let i = 0; i < 1000; i++) {
       const msg = randomMessage(types[i % types.length], rnd);

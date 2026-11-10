@@ -135,6 +135,8 @@ function messageFields(msg: Message): [string, string][] {
         ['Command', String(msg.commandId)],
         ['Result', String(msg.result)],
       ];
+    case 'SHOT':
+      return [['Onset', `${(msg.tMs / 1000).toFixed(3)} s`]];
   }
 }
 
@@ -214,6 +216,9 @@ function payloadSpans(msg: Message): { name: string; start: number; end: number 
     case 'ACK':
       push('command', 8);
       push('result', 8);
+      break;
+    case 'SHOT':
+      push('onset ms', 32);
       break;
   }
   return out;
