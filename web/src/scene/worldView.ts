@@ -329,10 +329,10 @@ function blastWave(): THREE.Mesh {
 
 const FLASH_S = 0.08;
 const WAVE_S = 1.5;
-const HEARD_S = 1.5;
+const HEARD_S = 4;
 const HEARD_RADIUS_M = 40;
 // How long a placed shot stays marked on the map.
-const FIX_SHOW_S = 4;
+const FIX_SHOW_S = 10;
 const SHOT_COLOR = 0xff4d6d;
 
 function buildGateway(): THREE.Group {
