@@ -187,7 +187,7 @@ describe('impulse detector', () => {
 describe('scenario shooters', () => {
   it('parses the example range', () => {
     const scn = parseScenario(exampleScenario);
-    expect(scn.shooters?.[0]).toMatchObject({ kind: 'range', every_s: 4 });
+    expect(scn.shooters?.[0]).toMatchObject({ kind: 'range', every_s: 12 });
   });
 
   it('rejects a shooter that never fires', () => {
@@ -223,12 +223,13 @@ describe('shooter ops', () => {
 
 describe('shot audio at a mic', () => {
   it('keeps the reverb tail after the crack, not just the first block', () => {
-    const scn = parseScenario({ ...exampleScenario, drones: [] });
+    const scn = parseScenario({ ...exampleScenario, shooters: [], drones: [] });
     const runner = new Runner(scn);
     const engine = new AcousticEngine(scn, runner.world.terrain, { ringSeconds: 25 });
+    // A one-off shot at tick 0, about 160 m from node 10, so its crack reaches the mic about 0.5 s in.
+    applyOp(runner.world, { type: 'shot_fire', id: 1, x: 420, y: -200 });
     engine.start(runner.world);
-    // The first shot reaches node 10 about 3 s in, so run to 4.5 s.
-    for (let i = 0; i < 450; i++) {
+    for (let i = 0; i < 210; i++) {
       runner.stepTick();
       engine.tick(runner.world);
     }
@@ -239,7 +240,7 @@ describe('shot audio at a mic', () => {
       for (let j = a; j < a + 160; j++) s += x[j] * x[j];
       return 10 * Math.log10(s / 160 + 1e-30);
     };
-    // The crack is about 3 s, and 0.8 s later the tail should still be well above the floor.
-    expect(level(3.2)).toBeGreaterThan(level(4.4) + 15);
+    // Just after the crack the tail should still be well above the level 1.5 s later.
+    expect(level(0.6)).toBeGreaterThan(level(2.0) + 15);
   });
 });
