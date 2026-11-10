@@ -27,7 +27,7 @@ export function renderIntro(dialog: HTMLDialogElement, onStart: () => void, onHo
     </div>
     <div class="intro-actions">
       <button class="how-link">How it works</button>
-      <button class="start" autofocus>Close and start</button>
+      <button class="start" autofocus>Got it</button>
     </div>
   `;
   dialog.querySelector('.start')?.addEventListener('click', () => {
