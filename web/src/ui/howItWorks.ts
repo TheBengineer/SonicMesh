@@ -1,5 +1,9 @@
 import { clamp } from '../sim/math';
 import { esc, need } from './dom';
+import { renderShot, shotRng } from '../acoustics/shot';
+import { FS, REF_PA, SOUND_SPEED_MPS } from '../acoustics/model';
+import { locateShot, locateShots, type ShotReport } from '../lora/shotLocate';
+import type { ShotFix } from '../lora/types';
 
 // The "How it works" walkthrough: a dialog of short steps, each with a small scene to play with. The scenes are sketches
 // that teach the idea, on made-up spectra and tracks, so they do not run the detector. Every result figure on the
@@ -791,6 +795,425 @@ function nodePanel(stage: HTMLElement): void {
   refresh();
 }
 
+// --- Gunshot scenes: the same chain as the drones, run on a shot. They call the real shot model and the real solver. ---
+
+const SHOT_NODES = [-360, -240, -120, 0, 120, 240, 360].map((x, i) => ({ id: i + 1, x, y: i % 2 === 0 ? 30 : -30, array: i % 3 === 2 }));
+const SHOT_WORLD = { x: 450, y: 300 };
+const SHOT_SIZE: [number, number] = [900, 600];
+// Rings run far slower than sound, so the eye can follow them. Node times are still real, in ms.
+const RING_VIS_MPS = 160;
+const PLOT_PAD = 36;
+
+function worldToPx(x: number, y: number, w: number, h: number): [number, number] {
+  return [w / 2 + (x / SHOT_WORLD.x) * (w / 2 - 14), (PLOT_PAD + h - PLOT_PAD) / 2 - (y / SHOT_WORLD.y) * ((h - 2 * PLOT_PAD) / 2)];
+}
+
+function pxToWorld(px: number, py: number, w: number, h: number): [number, number] {
+  return [((px - w / 2) / (w / 2 - 14)) * SHOT_WORLD.x, (((PLOT_PAD + h - PLOT_PAD) / 2 - py) / ((h - 2 * PLOT_PAD) / 2)) * SHOT_WORLD.y];
+}
+
+// What the nodes would report for a shot fired at (x, y) at tFire: onset times, and bearings at the arrays.
+function shotReports(x: number, y: number, tFire: number): ShotReport[] {
+  return SHOT_NODES.map((n) => {
+    const d = Math.hypot(x - n.x, y - n.y);
+    const az = n.array ? (((Math.atan2(x - n.x, y - n.y) * 180) / Math.PI) + 360) % 360 : null;
+    return { id: n.id, x: n.x, y: n.y, tS: tFire + d / SOUND_SPEED_MPS, azDeg: az };
+  });
+}
+
+function drawNodes(v: View, heard: (n: (typeof SHOT_NODES)[number]) => boolean): void {
+  for (const n of SHOT_NODES) {
+    const [px, py] = worldToPx(n.x, n.y, v.w, v.h);
+    v.g.fillStyle = heard(n) ? RED : QUIET;
+    v.g.beginPath();
+    v.g.arc(px, py, 7, 0, Math.PI * 2);
+    v.g.fill();
+    label(v, n.array ? `${n.id} array` : String(n.id), px, py + 22, MUTED, 11, 'center');
+  }
+}
+
+function marker(v: View, x: number, y: number, color: string, size = 7): void {
+  const [px, py] = worldToPx(x, y, v.w, v.h);
+  v.g.strokeStyle = color;
+  v.g.lineWidth = 2;
+  v.g.beginPath();
+  v.g.moveTo(px - size, py - size);
+  v.g.lineTo(px + size, py + size);
+  v.g.moveTo(px + size, py - size);
+  v.g.lineTo(px - size, py + size);
+  v.g.stroke();
+}
+
+// The crack as the detector sees it: 1 ms power in dB at a distance, against the background and the threshold.
+const BG_DB = 50;
+const DETECT_DB = Math.max(60, BG_DB + 12);
+const SCOPE_S = 0.6;
+
+function levelsDb(wave: Float64Array, distanceM: number): number[] {
+  const win = FS / 1000;
+  const out: number[] = [];
+  for (let k = 0; k < Math.floor((SCOPE_S * FS) / win); k++) {
+    let sum = 0;
+    for (let i = k * win; i < (k + 1) * win && i < wave.length; i++) sum += wave[i] * wave[i];
+    // Spreading loss only: pressure falls as 1/distance. Air, ground and walls are left out of this sketch.
+    const pa = Math.sqrt(sum / win) / Math.max(1, distanceM);
+    out.push(20 * Math.log10(Math.max(pa, 1e-12) / REF_PA));
+  }
+  return out;
+}
+
+function shotDetectScene(ui: HTMLElement): Scene {
+  let distanceM = 100;
+  let shots = 0;
+  let wave: Float64Array = renderShot(shotRng(3, 1, shots));
+  let t = SCOPE_S;
+  ui.innerHTML = `
+    <div class="how-row"><button type="button" class="how-action" data-fire>Fire a shot</button></div>
+    <label class="how-slider">Distance <input type="range" min="0" max="1000" value="${Math.round(
+      (1000 * Math.log(distanceM / 10)) / Math.log(100),
+    )}" aria-label="Distance to the shot"></label>
+    <p class="how-result" data-result aria-live="polite"></p>`;
+  const result = need<HTMLElement>(ui, '[data-result]');
+  need<HTMLButtonElement>(ui, '[data-fire]').addEventListener('click', () => {
+    wave = renderShot(shotRng(3, 1, ++shots));
+    t = 0;
+  });
+  need<HTMLInputElement>(ui, 'input').addEventListener('input', (e) => {
+    distanceM = 10 * Math.pow(100, Number((e.target as HTMLInputElement).value) / 1000);
+  });
+  let shown = '';
+  return {
+    draw(v) {
+      t = Math.min(SCOPE_S, t + v.dt);
+      clear(v);
+      const levels = levelsDb(wave, distanceM);
+      const onset = levels.findIndex((db) => db >= DETECT_DB);
+      const left = 46;
+      const right = v.w - 12;
+      const top = 34;
+      const bottom = v.h - 30;
+      const toX = (ms: number): number => left + (ms / (SCOPE_S * 1000)) * (right - left);
+      const toY = (db: number): number => bottom - ((clamp(db, 40, 150) - 40) / 110) * (bottom - top);
+      label(v, 'Level at the node, 1 ms at a time', 12, 20, TEXT, 13);
+      // Hold: the 50 ms after an onset, shaded.
+      if (onset >= 0) {
+        v.g.fillStyle = 'rgba(255, 77, 109, 0.14)';
+        v.g.fillRect(toX(onset), top, toX(onset + 50) - toX(onset), bottom - top);
+      }
+      v.g.strokeStyle = GRID;
+      v.g.lineWidth = 1;
+      v.g.beginPath();
+      v.g.moveTo(left, bottom);
+      v.g.lineTo(right, bottom);
+      v.g.stroke();
+      const reveal = Math.floor((t / SCOPE_S) * levels.length);
+      v.g.strokeStyle = BLUE;
+      v.g.lineWidth = 2;
+      v.g.beginPath();
+      for (let k = 0; k < reveal; k++) {
+        const x = toX(k);
+        if (k === 0) v.g.moveTo(x, toY(levels[k]));
+        else v.g.lineTo(x, toY(levels[k]));
+      }
+      v.g.stroke();
+      // The threshold, and the background it sits above.
+      for (const [db, color, dash] of [[BG_DB, QUIET, [2, 4]], [DETECT_DB, AMBER, [6, 4]]] as const) {
+        v.g.strokeStyle = color;
+        v.g.setLineDash([...dash]);
+        v.g.beginPath();
+        v.g.moveTo(left, toY(db));
+        v.g.lineTo(right, toY(db));
+        v.g.stroke();
+        v.g.setLineDash([]);
+      }
+      label(v, 'threshold', right, toY(DETECT_DB) - 6, AMBER, 11, 'right');
+      label(v, 'background', right, toY(BG_DB) - 6, QUIET, 11, 'right');
+      for (let db = 40; db <= 150; db += 30) label(v, `${db} dB`, left - 6, toY(db) + 4, MUTED, 11, 'right');
+      for (let ms = 0; ms <= 600; ms += 200) label(v, `${ms} ms`, toX(ms), v.h - 10, MUTED, 11, ms === 0 ? 'left' : ms === 600 ? 'right' : 'center');
+      if (onset >= 0 && reveal > onset) {
+        v.g.strokeStyle = RED;
+        v.g.beginPath();
+        v.g.moveTo(toX(onset), top);
+        v.g.lineTo(toX(onset), bottom);
+        v.g.stroke();
+      }
+      const text =
+        onset >= 0
+          ? `Onset at ${onset} ms. Held for 50 ms, so the crack doesn’t trigger a second alarm. Drag the distance: spreading loss only.`
+          : 'Never 12 dB above the background at this distance, so no onset.';
+      if (text !== shown) {
+        result.textContent = text;
+        shown = text;
+      }
+    },
+  };
+}
+
+function shotPlaceScene(ui: HTMLElement, canvas: HTMLCanvasElement): Scene {
+  let shot: { x: number; y: number } | null = null;
+  let age = 0;
+  let fix: ShotFix | null = null;
+  let announced = false;
+  ui.innerHTML = `<p class="how-result" data-result aria-live="polite">Tap the ground to fire a shot.</p>`;
+  const result = need<HTMLElement>(ui, '[data-result]');
+  const onTap = (e: PointerEvent): void => {
+    const r = canvas.getBoundingClientRect();
+    const [x, y] = pxToWorld(e.clientX - r.left, e.clientY - r.top, r.width, r.height);
+    shot = { x, y };
+    age = 0;
+    fix = locateShot(shotReports(x, y, 0), SHOT_SIZE);
+    announced = false;
+    result.textContent = 'Listening…';
+  };
+  canvas.addEventListener('pointerdown', onTap);
+  return {
+    draw(v) {
+      clear(v);
+      if (!shot) {
+        drawNodes(v, () => false);
+        label(v, 'Tap anywhere on the ground.', 12, 20, TEXT, 13);
+        return;
+      }
+      age += v.dt;
+      const reports = shotReports(shot.x, shot.y, 0);
+      const radiusM = age * RING_VIS_MPS;
+      const [sx, sy] = worldToPx(shot.x, shot.y, v.w, v.h);
+      const pxPerM = (v.w / 2 - 14) / SHOT_WORLD.x;
+      v.g.strokeStyle = RED;
+      for (const k of [0, 1, 2]) {
+        const r = radiusM - k * 40;
+        if (r <= 0) continue;
+        v.g.globalAlpha = 0.6 - k * 0.2;
+        v.g.lineWidth = 1.5;
+        v.g.beginPath();
+        v.g.arc(sx, sy, r * pxPerM, 0, Math.PI * 2);
+        v.g.stroke();
+      }
+      v.g.globalAlpha = 1;
+      drawNodes(v, (n) => radiusM >= Math.hypot(shot!.x - n.x, shot!.y - n.y));
+      for (const rep of reports) {
+        if (radiusM < Math.hypot(shot.x - rep.x, shot.y - rep.y)) continue;
+        const [px, py] = worldToPx(rep.x, rep.y, v.w, v.h);
+        label(v, `+${((rep.tS * 1000) | 0)} ms`, px, py - 14, TEXT, 11, 'center');
+      }
+      marker(v, shot.x, shot.y, AMBER, 9);
+      if (fix) {
+        marker(v, fix.x, fix.y, TEXT, 6);
+        const [fx, fy] = worldToPx(fix.x, fix.y, v.w, v.h);
+        v.g.strokeStyle = TEXT;
+        v.g.lineWidth = 1;
+        v.g.beginPath();
+        v.g.arc(fx, fy, fix.radiusM * pxPerM, 0, Math.PI * 2);
+        v.g.stroke();
+      }
+      const reached = radiusM >= Math.hypot(SHOT_WORLD.x, SHOT_WORLD.y) * 0.95 || age > 6;
+      if (reached && !announced) {
+        announced = true;
+        result.textContent = fix
+          ? `Placed ${Math.hypot(fix.x - shot.x, fix.y - shot.y).toFixed(1)} m from where it was fired, from ${fix.nodeIds.length} nodes. The circle is the uncertainty.`
+          : 'Too few nodes or bearings to place it.';
+      }
+    },
+    stop: () => canvas.removeEventListener('pointerdown', onTap),
+  };
+}
+
+function shotPairScene(ui: HTMLElement): Scene {
+  const pair = [
+    { x: 250, y: 120, t: 0 },
+    { x: -200, y: -150, t: 0.05 },
+  ];
+  let found: ShotFix[] = [];
+  let fired = false;
+  ui.innerHTML = `
+    <div class="how-row"><button type="button" class="how-action" data-fire>Fire two at once</button></div>
+    <p class="how-result" data-result aria-live="polite">Two shots 50 ms apart, so their onsets interleave at every node.</p>`;
+  const result = need<HTMLElement>(ui, '[data-result]');
+  need<HTMLButtonElement>(ui, '[data-fire]').addEventListener('click', () => {
+    const reports = pair.flatMap((s) => shotReports(s.x, s.y, s.t));
+    found = locateShots(reports, SHOT_SIZE).fixes;
+    fired = true;
+    const errors = pair.map((s) => Math.min(...found.map((f) => Math.hypot(f.x - s.x, f.y - s.y))));
+    result.textContent = `Found ${found.length} shots. Nearest placed fix to each: ${errors.map((e) => (Number.isFinite(e) ? `${e.toFixed(1)} m` : 'missed')).join(' and ')}.`;
+  });
+  return {
+    draw(v) {
+      clear(v);
+      drawNodes(v, () => fired);
+      if (fired) {
+        // Each array's bearing to each shot, so the crossings are visible.
+        for (const n of SHOT_NODES.filter((m) => m.array)) {
+          for (const s of pair) {
+            const [ax, ay] = worldToPx(n.x, n.y, v.w, v.h);
+            const [bx, by] = worldToPx(s.x, s.y, v.w, v.h);
+            v.g.strokeStyle = GRID;
+            v.g.lineWidth = 1;
+            v.g.setLineDash([4, 5]);
+            v.g.beginPath();
+            v.g.moveTo(ax, ay);
+            v.g.lineTo(bx, by);
+            v.g.stroke();
+            v.g.setLineDash([]);
+          }
+        }
+        for (const f of found) marker(v, f.x, f.y, RED, 8);
+      }
+      for (const s of pair) marker(v, s.x, s.y, AMBER, 9);
+      label(v, 'Two shots, overlapping in time', 12, 20, TEXT, 13);
+    },
+  };
+}
+
+// The same five places for every use case. Shared cells are grey; each use case's own cells carry its colour.
+const FLOW_COLS = ['Sound', 'Node', 'Message', 'Window', 'Gateway', 'Map'];
+const FLOW_LANES: { key: 'drone' | 'shot' | 'next'; cells: string[]; color: string; dashed?: boolean }[] = [
+  { key: 'drone', cells: ['Rotor tones', 'Comb detector', 'DETECT', 'Window', 'Pair alert', 'Track'], color: BLUE },
+  { key: 'shot', cells: ['Crack and tail', 'Impulse detector', 'SHOT', 'Window', 'Shot solver', 'Fix'], color: RED },
+  { key: 'next', cells: ['New source', 'New detector', 'New message', 'Window', 'New locator', 'New layer'], color: AMBER, dashed: true },
+];
+const FLOW_NOTES: Record<'all' | 'drone' | 'shot' | 'next', string> = {
+  all: 'Every use case runs the same chain. Grey cells are shared, and each use case brings its own coloured cells.',
+  drone: 'Drones: a comb finds the rotor tones, and the gateway pairs two neighbours on the same pitch.',
+  shot: 'Gunshots: an impulse detector finds the crack, and the gateway solves where it was fired. They added one model, one detector, one message, one solver and one map layer. The drone detector did not change.',
+  next: 'Your next use case takes the same five places. The grey cells stay as they are.',
+};
+
+// A cell's name, wrapped onto as many lines as the cell's width needs.
+function fitLabel(v: View, text: string, cx: number, cy: number, width: number, color: string): void {
+  v.g.font = '11px system-ui, sans-serif';
+  const lines: string[] = [];
+  let cur = '';
+  for (const word of text.split(' ')) {
+    const trial = cur ? `${cur} ${word}` : word;
+    if (v.g.measureText(trial).width <= width || !cur) cur = trial;
+    else {
+      lines.push(cur);
+      cur = word;
+    }
+  }
+  if (cur) lines.push(cur);
+  lines.forEach((ln, i) => label(v, ln, cx, cy + (i - (lines.length - 1) / 2) * 13, color, 11, 'center'));
+}
+
+function flowScene(ui: HTMLElement): Scene {
+  let show: keyof typeof FLOW_NOTES = 'all';
+  let t = 0;
+  ui.innerHTML = `<div data-show></div><p class="how-result" data-result aria-live="polite"></p>`;
+  const result = need<HTMLElement>(ui, '[data-result]');
+  result.textContent = FLOW_NOTES.all;
+  chips(
+    need<HTMLElement>(ui, '[data-show]'),
+    [['all', 'All'], ['drone', 'Drone'], ['shot', 'Gunshot'], ['next', 'Next one']],
+    show,
+    (s) => {
+      show = s;
+      result.textContent = FLOW_NOTES[s];
+    },
+  );
+  return {
+    draw(v) {
+      clear(v);
+      t = (t + v.dt * 0.7) % FLOW_COLS.length;
+      const colW = (v.w - 28) / FLOW_COLS.length;
+      const left = 14;
+      FLOW_COLS.forEach((c, i) => label(v, c, left + colW * (i + 0.5), 22, MUTED, 12, 'center'));
+      const laneTop = 40;
+      const laneH = Math.max(50, Math.min(74, (v.h - laneTop - 14) / FLOW_LANES.length));
+      FLOW_LANES.forEach((lane, li) => {
+        const on = show === 'all' || show === lane.key;
+        const y = laneTop + li * laneH + (laneH - 40) / 2;
+        lane.cells.forEach((c, ci) => {
+          const x = left + colW * ci + 4;
+          const shared = ci === 3;
+          v.g.globalAlpha = on ? 1 : 0.25;
+          v.g.fillStyle = '#131b24';
+          v.g.fillRect(x, y, colW - 8, 40);
+          v.g.strokeStyle = shared ? QUIET : lane.color;
+          v.g.lineWidth = 2;
+          v.g.setLineDash(lane.dashed && !shared ? [5, 4] : []);
+          v.g.strokeRect(x, y, colW - 8, 40);
+          v.g.setLineDash([]);
+          fitLabel(v, c, x + (colW - 8) / 2, y + 20, colW - 14, on ? TEXT : MUTED);
+          v.g.globalAlpha = 1;
+        });
+        if (on) {
+          const dotX = left + colW * (t + 0.5);
+          v.g.fillStyle = lane.color;
+          v.g.beginPath();
+          v.g.arc(dotX, y + 50, 5, 0, Math.PI * 2);
+          v.g.fill();
+        }
+      });
+    },
+  };
+}
+
+// The lead-in to gunshots: the same nodes, radio, gateway and map, with one more thing to listen for.
+function expandScene(ui: HTMLElement): Scene {
+  let added = false;
+  ui.innerHTML = `<div data-mode></div><p class="how-result" data-result aria-live="polite"></p>`;
+  const result = need<HTMLElement>(ui, '[data-result]');
+  const note = {
+    drones: 'Drones only. The network hears rotor tones and places them on the map.',
+    both: 'Same nodes, same radio, same gateway, same map. Gunshots add one detector, one message and one locator.',
+  };
+  result.textContent = note.drones;
+  chips(
+    need<HTMLElement>(ui, '[data-mode]'),
+    [['drones', 'Drones only'], ['both', 'Add gunshots']],
+    'drones',
+    (m) => {
+      added = m === 'both';
+      result.textContent = note[m];
+    },
+  );
+  return {
+    draw(v) {
+      clear(v);
+      const lineY = v.h * 0.5;
+      const gap = v.w / (LINE_NODES + 0.4);
+      const nodeX = (i: number): number => gap * (i + 0.7);
+      v.g.strokeStyle = GRID;
+      v.g.lineWidth = 1;
+      v.g.setLineDash([6, 6]);
+      v.g.beginPath();
+      v.g.moveTo(0, lineY);
+      v.g.lineTo(v.w, lineY);
+      v.g.stroke();
+      v.g.setLineDash([]);
+      for (let i = 0; i < LINE_NODES; i++) {
+        v.g.fillStyle = QUIET;
+        v.g.beginPath();
+        v.g.arc(nodeX(i), lineY, 9, 0, Math.PI * 2);
+        v.g.fill();
+        label(v, String(i + 1), nodeX(i), lineY + 26, MUTED, 12, 'center');
+      }
+      // A drone's rotor tones, always on: the first thing the network does.
+      v.g.strokeStyle = BLUE;
+      v.g.lineWidth = 2;
+      v.g.beginPath();
+      v.g.arc(nodeX(2), lineY - 60, 14, 0, Math.PI * 2);
+      v.g.stroke();
+      label(v, 'drone', nodeX(2), lineY - 84, BLUE, 12, 'center');
+      if (added) {
+        for (const [i, dy] of [[1, 120], [5, -110]] as const) {
+          const cx = nodeX(i) + 10;
+          const cy = lineY + dy;
+          v.g.strokeStyle = RED;
+          v.g.lineWidth = 1.5;
+          v.g.beginPath();
+          v.g.arc(cx, cy, 6, 0, Math.PI * 2);
+          v.g.stroke();
+          label(v, 'shot', cx, cy - 12, RED, 12, 'center');
+        }
+        label(v, 'Shared: nodes, radio, gateway, map', v.w / 2, 22, TEXT, 13, 'center');
+      } else {
+        label(v, 'Nodes, radio, gateway and map: already built', v.w / 2, 22, TEXT, 13, 'center');
+      }
+    },
+  };
+}
+
 // --- The steps ---
 
 const STEPS: Step[] = [
@@ -852,9 +1275,45 @@ const STEPS: Step[] = [
     scene: installScene,
   },
   {
+    kicker: 'But can it do more?',
+    title: 'Gunshot detection',
+    copy: `<p>If the network already hears drones, most of what a second job needs is already in place: microphones on the nodes, a radio link to the gateway, and a map.</p>
+      <p>Expanding means teaching it a new sound: a detector for that sound, a message for the node to send, and a locator for the gateway. Nothing else changes. Gunshots came next, on the same nodes.</p>`,
+    scene: expandScene,
+  },
+  {
+    kicker: 'A second use: gunshots',
+    title: 'The same nodes hear a shot',
+    copy: `<p>A gunshot is one sharp crack with a short fading tail. It has no pitch, so the comb can’t see it.</p>
+      <p>Instead the node watches for a sudden jump: a 1 ms slice at least 12 dB above the background, held for 50 ms so the crack doesn’t trigger a second alarm. Fire one and drag the distance.</p>`,
+    scene: shotDetectScene,
+  },
+  {
+    kicker: 'Gunshots: across the line',
+    title: 'Arrival times place the shot',
+    copy: `<p>Sound takes about 3 ms per metre. Each node reports when the crack reached it, and the differences place the shot on curves. An array also reports its bearing, which picks the side of the line.</p>
+      <p><strong>Try it:</strong> tap the ground to fire a shot. The rings run slower than sound, so you can follow them.</p>`,
+    scene: shotPlaceScene,
+  },
+  {
+    kicker: 'Gunshots: several at once',
+    title: 'Overlapping shots are untangled',
+    copy: `<p>Two shots can land in the same second. The gateway looks for every spot where two bearings cross, keeps the arrival times that agree with one firing time there, and fits the largest group first.</p>
+      <p>Each shot needs at least four reports to count, so one stray crack doesn’t become a shot.</p>`,
+    scene: shotPairScene,
+  },
+  {
+    kicker: 'Adding a use case',
+    title: 'New sounds plug into the same network',
+    copy: `<p>Drones and gunshots share the radio windows, the gateway and the map. Each use case brings only what is different: a detector, a message and a locator.</p>
+      <p>Gunshots needed one model, one detector, one message, one solver and one map layer. The drone detector didn’t change. The next use case takes the same five places, and <a href="${REPO}/blob/main/docs/gunshots.md" target="_blank" rel="noopener">the walkthrough is in docs/gunshots.md</a>.</p>`,
+    scene: flowScene,
+  },
+  {
     kicker: 'Your turn',
     title: 'Now try to sneak past it',
-    copy: `<p>The scenes here were sketches. Behind this window, a simulated line of nodes runs the same comb logic as the research code, on simulated sound.</p>`,
+    copy: `<p>The scenes here were sketches. Behind this window, a simulated line of nodes runs the same comb logic as the research code, on simulated sound.</p>
+      <p><strong>Try it:</strong> switch on gunshot mode and click the map to fire one shot, or add a shooter that fires on its own.</p>`,
     scene: null,
   },
 ];

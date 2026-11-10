@@ -332,7 +332,7 @@ components:
     name: Gunshots from a range or shooter
     tag: ASSUMED
     milestone: M1
-    summary: "A shot is one crack with a decaying tail, peak 130 dB SPL at 1 m (assumed). The muzzle blast and the bullet's shockwave are not modelled separately. Each shot is varied in pitch, level and tail. Shots reach the mics through the drone's path: distance, air, terrain blocking and the ground reflection. The mics overload at 130 dB SPL."
+    summary: "A shot is one crack with a decaying tail, peak 140 dB SPL at 1 m (assumed). The muzzle blast and the bullet's shockwave are not modelled separately. Each shot is varied in level and tail length. Shots reach the mics through the drone's path: distance, air, terrain blocking and the ground reflection. The mics overload at 130 dB SPL."
     evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/web/src/acoustics/shot.ts"
     upgrade: "ASSUMED to MODELLED with recorded shots at known distances, fitting the level and the overload point."
     bias: "The decay and band balance are fitted to four target-shooting recordings close to the mic, not to field recordings at distance. No wind, no buildings, one shot type."
@@ -344,7 +344,7 @@ components:
     summary: "The gateway groups the shot onsets that nodes report and fits a spot to them: onset times give the differences in travel time between nodes, and each array's bearing picks the side of the line. Each array's bearing comes from a broadband delay-and-sum over the crack's first 32 ms."
     evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/web/src/lora/shotLocate.ts"
     upgrade: "MODELLED to REAL with recorded shots at surveyed positions, and with the onset times the nodes' own clocks report over LoRa."
-    bias: "Onset times come from the simulation's one shared clock, not the network's synced clocks. Shots fired within about 1.5 s of each other at different places would merge into one fit. Without a bearing, a shot is not placed, so a line of nodes with no array cannot place one."
+    bias: "Onset times come from the simulation's one shared clock, not the network's synced clocks. Overlapping shots are separated by where their bearings cross, and the example run still fits some shots poorly (worst about 40 m). Without two bearings, a shot is not placed, so a line of nodes with fewer than two arrays cannot place one."
 
   - id: impulse-onset
     name: Shot onset detector at nodes

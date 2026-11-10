@@ -59,7 +59,6 @@ export const EVENT_HOLD_S = 10;
 export const RANGING_EVERY = 4;
 // The beacon must fit its window: 7 idle slot assignments stay under 250 ms at SF9/125k.
 export const MAX_IDLE_SLOT_MAP = 7;
-export const MAX_EVENT_SLOT_MAP = 8;
 export const MAX_SNIPPET_REQUESTS = 2;
 const MAX_PACKETS = 500;
 const MAX_MESSAGES = 60;
@@ -70,6 +69,18 @@ export const ACTION_HEALTH = 1;
 export const ACTION_DETECT = 2;
 export const ACTION_RANGING = 3;
 export const ACTION_ACK = 4;
+// The hub's answer to a JOIN: this node's shot window, so it sends SHOT only in its own slot.
+export const ACTION_WINDOW = 5;
+// Idle scheduled slots: windows take the first SHOT_WINDOWS slots on odd superframes, health takes the last one, and
+// the first superframe and the join phases carry joins at their own pitch. Ranging keeps the first slots on even ones.
+export const SHOT_WINDOWS = SCHED_SLOTS - 1;
+export const HEALTH_SLOT = SCHED_SLOTS - 1;
+// A JOIN is 0.226 s at SF9, longer than one 220 ms slot, so the joins run at a 237 ms pitch. Thirteen fit the scheduled
+// region, so every node joins in the first superframe, before any drone event can keep the network busy. A node that
+// missed it joins in a later superframe with the same pitch.
+export const JOIN_PITCH_S = 0.237;
+export const JOIN_PHASE = 2;
+export const JOIN_EVERY = 4;
 
 export interface NetworkOptions {
   seed: number;
@@ -112,6 +123,8 @@ interface NetNode {
   // Onsets heard but not yet sent as SHOT, oldest first, and the newest onset already queued.
   shotQueue: number[];
   lastShotS: number;
+  // The shot window the hub gave this node, from the beacon. Null until it has joined.
+  shotWindow: number | null;
   snippetRequested: boolean;
   health: HealthView | null;
   lastHealthS: number | null;
@@ -208,6 +221,10 @@ export class LoRaNetwork {
   private truth: TruthTarget[] = [];
   private mode: 'idle' | 'event' = 'idle';
   private superframe = 0;
+  // The hub's table of shot windows, by node, given out at join.
+  private readonly windows = new Map<number, number>();
+  // Nodes whose window the next odd beacons still have to name. A beacon has room for only a few more slot entries.
+  private readonly announce: number[] = [];
   private nextSfStart = 0;
   private eventLastS = -Infinity;
   private nowS = 0;
@@ -241,6 +258,8 @@ export class LoRaNetwork {
     for (const spec of nodes) this.addNode(spec);
     this.mode = 'idle';
     this.superframe = 0;
+    this.windows.clear();
+    this.announce.length = 0;
     this.nextSfStart = 0;
     this.eventLastS = -Infinity;
     this.nowS = 0;
@@ -284,6 +303,7 @@ export class LoRaNetwork {
       pendingAlert: null,
       shotQueue: [],
       lastShotS: -Infinity,
+      shotWindow: null,
       snippetRequested: false,
       health: null,
       lastHealthS: null,
@@ -326,6 +346,7 @@ export class LoRaNetwork {
           pendingAlert: null,
           shotQueue: [],
           lastShotS: -Infinity,
+          shotWindow: null,
           snippetRequested: false,
           health: null,
           lastHealthS: null,
@@ -480,12 +501,18 @@ export class LoRaNetwork {
 
     const plan = this.planSlots(sfMode, sf);
     const slotMap: { node: number; action: number; arg: number }[] = [];
-    let slot = 0;
     if (sfMode === 'idle') {
-      for (const n of plan.health) slotMap.push({ node: n, action: ACTION_HEALTH, arg: slot++ });
+      for (const n of plan.health) slotMap.push({ node: n, action: ACTION_HEALTH, arg: HEALTH_SLOT });
       for (const p of plan.ranging) slotMap.push({ node: p.a, action: ACTION_RANGING, arg: argOf(p.b) });
+      // Odd beacons name pending windows, in whatever room health leaves in the slot map.
+      if (sf % 2 === 1) {
+        const room = MAX_IDLE_SLOT_MAP - plan.health.length;
+        for (const node of this.announce.splice(0, Math.max(0, room))) {
+          slotMap.push({ node, action: ACTION_WINDOW, arg: this.windows.get(node) ?? 0 });
+        }
+      }
     } else {
-      for (let i = 0; i < plan.detecting.length && i < MAX_EVENT_SLOT_MAP; i++) {
+      for (let i = 0; i < plan.detecting.length && i < EVENT_NODE_SLOTS; i++) {
         slotMap.push({ node: plan.detecting[i], action: ACTION_DETECT, arg: i });
       }
     }
@@ -522,6 +549,9 @@ export class LoRaNetwork {
       node.beaconHeard = fate.fate === 'decoded';
       if (node.beaconHeard) {
         heard.add(node.spec.id);
+        // The window the hub gave this node, if the beacon names it.
+        const mine = beaconMessage.slotMap.find((a) => a.node === node.spec.id && a.action === ACTION_WINDOW);
+        if (mine) node.shotWindow = mine.arg;
         node.lastBeaconS = beaconStart;
         node.beaconRssi = fate.rssi;
         node.beaconSnr = fate.snr;
@@ -541,35 +571,44 @@ export class LoRaNetwork {
     beacon.fates = this.fatesFor(beacon, waves, txs);
 
     if (sfMode === 'idle') {
-      for (const node of this.nodes) {
-        if (!heard.has(node.spec.id)) continue;
-        if (node.pendingAlert) this.scheduleAlert(node, startS, channel, waves, txs);
-        if (node.shotQueue.length > 0) this.scheduleShot(node, startS, channel, waves, txs);
-      }
-      let idx = 0;
-      for (const id of plan.health) {
-        if (!heard.has(id)) {
-          idx++;
-          continue;
+      // Joins come first: while a node is still joining, the windows stay quiet so the join slots are clear.
+      const joinFrame = sf === 0 || sf % JOIN_EVERY === JOIN_PHASE;
+      const joiners = joinFrame ? this.nodes.filter((n) => heard.has(n.spec.id) && n.shotWindow === null && n.spec.id <= SHOT_WINDOWS && !this.windows.has(n.spec.id)) : [];
+      // Each node's window: its own slot, the same every superframe, so no two nodes contend. The window carries the
+      // node's detection first, then its queued shot. Ranging keeps the first slots on its superframes, so windows pause.
+      const windowsOpen = sf % RANGING_EVERY !== 0 && joiners.length === 0;
+      if (windowsOpen) {
+        for (const node of this.nodes) {
+          if (!heard.has(node.spec.id) || node.shotWindow === null) continue;
+          const s = startS + SCHED_START_S + node.shotWindow * SCHED_SLOT_S;
+          if (node.pendingAlert) this.scheduleAlert(node, s, channel, waves, txs);
+          else if (node.shotQueue.length > 0) this.scheduleWindowShot(node, s, channel, waves, txs);
         }
+      }
+      for (const id of plan.health) {
+        if (!heard.has(id)) continue;
         const node = this.node(id);
-        if (node) this.scheduleHealth(node, startS + SCHED_START_S + idx * SCHED_SLOT_S, channel, waves, txs);
-        idx++;
+        if (node) this.scheduleHealth(node, startS + SCHED_START_S + HEALTH_SLOT * SCHED_SLOT_S, channel, waves, txs);
       }
       for (const pair of plan.ranging) {
         if (!heard.has(pair.a) || !heard.has(pair.b)) continue;
         this.scheduleRanging(pair, startS + SCHED_START_S + pair.slot * SCHED_SLOT_S, waves, txs);
       }
+      // Join: a node the hub has not given a window yet sends JOIN in the slot named for its id.
+      for (const node of joiners) this.scheduleJoin(node, startS + SCHED_START_S + (node.spec.id - 1) * JOIN_PITCH_S, channel, waves, txs);
     } else {
       let i = 0;
       for (const id of plan.detecting) {
-        if (i >= MAX_EVENT_SLOT_MAP) break;
+        if (i >= EVENT_NODE_SLOTS) break;
         if (!heard.has(id)) {
           i++;
           continue;
         }
         const node = this.node(id);
-        if (node) this.scheduleDetect(node, startS + EVENT_NODE_START_S + i * EVENT_NODE_SLOT_S, channel, waves, txs);
+        const s = startS + EVENT_NODE_START_S + i * EVENT_NODE_SLOT_S;
+        // A queued shot takes the node's slot for this superframe, and its detections resume in the next one.
+        if (node && node.shotQueue.length > 0) this.scheduleEventShot(node, s, channel, waves, txs);
+        else if (node && node.stub.detecting) this.scheduleDetect(node, s, channel, waves, txs);
         i++;
       }
       let burst = 0;
@@ -596,6 +635,8 @@ export class LoRaNetwork {
       if (!node) continue;
       this.logGatewayMessage(tx.message, tx.wave.tx, tx.packet.startS, 'received', tx.packet.id, tx.packet.frameHex);
       if (tx.message.type === 'SHOT') node.shotQueue.shift();
+      // The hub's answer to a JOIN is the next free shot window. It goes out in the next odd beacon.
+      if (tx.message.type === 'JOIN') this.assignWindow(node.spec.id);
       if (tx.message.type === 'DETECT_START' || tx.message.type === 'DETECT') {
         alertDecoded = true;
         this.eventLastS = Math.max(this.eventLastS, tx.packet.startS);
@@ -646,12 +687,13 @@ export class LoRaNetwork {
       for (const n of this.nodes) {
         if ((sf - n.spec.id) % HEALTH_PERIOD === 0) health.push(n.spec.id);
       }
-      if (sf % RANGING_EVERY === 0) {
+      // The first superframe is the join, so ranging waits for the second.
+      if (sf % RANGING_EVERY === 0 && sf > 0) {
         const links = this.rangingLinks();
         const count = Math.max(0, MAX_IDLE_SLOT_MAP - health.length);
         for (let i = 0; i < Math.min(count, links.length); i++) {
           const link = links[(this.rangingCursor + i) % links.length];
-          ranging.push({ ...link, slot: health.length + i });
+          ranging.push({ ...link, slot: i });
         }
         if (links.length > 0) {
           this.rangingCursor = (this.rangingCursor + count) % links.length;
@@ -659,7 +701,8 @@ export class LoRaNetwork {
         }
       }
     } else {
-      for (const n of this.nodes) if (n.stub.detecting) detecting.push(n.spec.id);
+      // A node with a queued shot needs an event slot too, or a drone that stays in the air would block every shot.
+      for (const n of this.nodes) if (n.stub.detecting || n.shotQueue.length > 0) detecting.push(n.spec.id);
       detecting.sort((a, b) => a - b);
       for (const id of detecting) {
         const n = this.node(id);
@@ -740,8 +783,8 @@ export class LoRaNetwork {
     return { packet, wave, message, fates: new Map(), health: null, ranging: null };
   }
 
-  private scheduleAlert(node: NetNode, startS: number, channel: ChannelSpec, waves: Wave[], txs: TxPlan[]): void {
-    const slot = Math.floor(node.stub.nextFloat() * ALERT_SLOTS);
+  // A node's own window can carry its detection, so the detection goes out in that window and never in a random slot.
+  private scheduleAlert(node: NetNode, s: number, channel: ChannelSpec, waves: Wave[], txs: TxPlan[]): void {
     const msg: Message = {
       type: 'DETECT_START',
       confidence: node.pendingAlert ? node.pendingAlert.detection.confidence : 0,
@@ -751,20 +794,53 @@ export class LoRaNetwork {
       el: node.pendingAlert ? node.pendingAlert.detection.el : 0,
       lineHz: node.pendingAlert ? node.pendingAlert.detection.lineHz : 0,
     };
-    const s = startS + ALERT_START_S + slot * ALERT_SLOT_S;
     const frame = encodeFrame(msg, node.spec.id, { fullCounter: this.fullCounter });
     const e = s + airtime(IDLE_SF, IDLE_BW, frame.length);
-    txs.push(this.makeTx(node.spec.id, msg, frame, s, e, IDLE_SF, IDLE_BW, channel, `alert ${slot + 1}`, waves));
+    txs.push(this.makeTx(node.spec.id, msg, frame, s, e, IDLE_SF, IDLE_BW, channel, 'detect window', waves));
   }
 
-  // One SHOT for the oldest queued onset, in a random alert slot. The queue keeps it until the gateway decodes it.
-  private scheduleShot(node: NetNode, startS: number, channel: ChannelSpec, waves: Wave[], txs: TxPlan[]): void {
-    const slot = Math.floor(node.stub.nextFloat() * ALERT_SLOTS);
+  // One SHOT for the oldest queued onset, in the node's own window. The queue keeps it until the gateway decodes it.
+  private scheduleWindowShot(node: NetNode, s: number, channel: ChannelSpec, waves: Wave[], txs: TxPlan[]): void {
     const msg: Message = { type: 'SHOT', tMs: node.shotQueue[0] };
-    const s = startS + ALERT_START_S + slot * ALERT_SLOT_S;
     const frame = encodeFrame(msg, node.spec.id, { fullCounter: this.fullCounter });
     const e = s + airtime(IDLE_SF, IDLE_BW, frame.length);
-    txs.push(this.makeTx(node.spec.id, msg, frame, s, e, IDLE_SF, IDLE_BW, channel, `shot ${slot + 1}`, waves));
+    txs.push(this.makeTx(node.spec.id, msg, frame, s, e, IDLE_SF, IDLE_BW, channel, 'shot window', waves));
+  }
+
+  // A JOIN in the node's join slot. Location and provisioning are zero until a provisioning step fills them in.
+  private scheduleJoin(node: NetNode, s: number, channel: ChannelSpec, waves: Wave[], txs: TxPlan[]): void {
+    const msg: Message = {
+      type: 'JOIN',
+      lat: 0,
+      lon: 0,
+      altDm: 0,
+      accuracyDm: 0,
+      confident: 0,
+      nodeType: node.spec.kind === 'array' ? 1 : 0,
+      provSeq: 0,
+      provTime: 0,
+      provMac: 0,
+    };
+    const frame = encodeFrame(msg, node.spec.id, { fullCounter: this.fullCounter });
+    const e = s + airtime(IDLE_SF, IDLE_BW, frame.length);
+    txs.push(this.makeTx(node.spec.id, msg, frame, s, e, IDLE_SF, IDLE_BW, channel, 'join', waves));
+  }
+
+  // The hub's answer to a JOIN: the node's window, kept if it has one already, and queued for the next odd beacons.
+  private assignWindow(id: number): void {
+    if (!this.windows.has(id)) {
+      if (this.windows.size >= SHOT_WINDOWS) return;
+      this.windows.set(id, this.windows.size);
+    }
+    if (!this.announce.includes(id)) this.announce.push(id);
+  }
+
+  // The queued shot for the event superframe: the node's own event slot, at the event PHY.
+  private scheduleEventShot(node: NetNode, s: number, channel: ChannelSpec, waves: Wave[], txs: TxPlan[]): void {
+    const msg: Message = { type: 'SHOT', tMs: node.shotQueue[0] };
+    const frame = encodeFrame(msg, node.spec.id, { fullCounter: this.fullCounter });
+    const e = s + airtime(EVENT_SF, EVENT_BW, frame.length);
+    txs.push(this.makeTx(node.spec.id, msg, frame, s, e, EVENT_SF, EVENT_BW, channel, 'shot', waves));
   }
 
   private scheduleHealth(node: NetNode, s: number, channel: ChannelSpec, waves: Wave[], txs: TxPlan[]): void {
@@ -916,10 +992,7 @@ export class LoRaNetwork {
   private buildGrid(mode: 'idle' | 'event', startS: number): GridSlot[] {
     const out: GridSlot[] = [];
     if (mode === 'idle') {
-      out.push({ startS, endS: startS + ALERT_START_S, label: 'Beacon', kind: 'beacon' });
-      for (let i = 0; i < ALERT_SLOTS; i++) {
-        out.push({ startS: startS + ALERT_START_S + i * ALERT_SLOT_S, endS: startS + ALERT_START_S + (i + 1) * ALERT_SLOT_S, label: `Alert ${i + 1}`, kind: 'alert' });
-      }
+      out.push({ startS, endS: startS + SCHED_START_S, label: 'Beacon', kind: 'beacon' });
       for (let i = 0; i < SCHED_SLOTS; i++) {
         out.push({ startS: startS + SCHED_START_S + i * SCHED_SLOT_S, endS: startS + SCHED_START_S + (i + 1) * SCHED_SLOT_S, label: `Slot ${i + 1}`, kind: 'slot' });
       }

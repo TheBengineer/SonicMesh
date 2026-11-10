@@ -7,8 +7,8 @@ import { parseScenario, type NodeSpec } from '../src/sim/scenario';
 import { Terrain } from '../src/sim/terrain';
 import { hashWorld } from '../src/sim/world';
 import { airtime } from '../src/lora/channel';
-import type { ShotFix } from '../src/lora/types';
-import { LoRaNetwork, alertContention } from '../src/lora/mac';
+import type { PacketView, ShotFix } from '../src/lora/types';
+import { ALERT_START_S, IDLE_SF, IDLE_SUPERFRAME_S, LoRaNetwork, SCHED_SLOT_S, SCHED_SLOTS, SCHED_START_S, alertContention } from '../src/lora/mac';
 
 const HEARD = { bandDb: 72, ambientDb: 40, comb: { on: true, tracking: true, f0Hz: 250, peak: 0.3 } };
 const QUIET = { bandDb: 40, ambientDb: 40, comb: { on: false, tracking: false, f0Hz: 0, peak: 0 } };
@@ -35,10 +35,14 @@ const EXAMPLE_RUN_TIMEOUT_MS = 300_000;
 describe('LoRa MAC and schedule', () => {
   it('idle for 10 minutes: two HEALTH per node, ~5 % beacon duty, airtime from the formula', () => {
     const net = network(scenario.nodes);
-    runSeconds(net, 600);
+    // The packet log keeps only the newest packets, so gather each packet while the run goes.
+    const packets = new Map<number, PacketView>();
+    runSeconds(net, 600, (n) => {
+      for (const p of n.snapshot().packets) packets.set(p.id, p);
+    });
 
     const view = net.snapshot();
-    const health = view.packets.filter((p) => p.type === 'HEALTH');
+    const health = [...packets.values()].filter((p) => p.type === 'HEALTH');
     const perNode = new Map<number, number>();
     for (const p of health) perNode.set(p.tx, (perNode.get(p.tx) ?? 0) + 1);
     for (const n of scenario.nodes) expect(perNode.get(n.id), `node ${n.id}`).toBe(2);
@@ -250,7 +254,9 @@ describe('LoRa MAC and schedule', () => {
     const near = errors.filter((e) => e < 15).length;
     expect(near / errors.length, 'most placed shots are near the range').toBeGreaterThan(0.8);
     expect(Math.max(...errors), 'no placed shot is far from the range').toBeLessThan(50);
-    for (const type of ['BEACON', 'RANGING_RESULT', 'DETECT_START', 'DETECT', 'SNIPPET']) {
+    // Ranging is not in this list: the first superframe is now the join, and the drone is audible before the first
+    // idle ranging round (superframe 4), so this run stays in event mode and ranging never gets an idle superframe.
+    for (const type of ['BEACON', 'DETECT_START', 'DETECT', 'SNIPPET']) {
       expect(types.has(type), `example run sent ${type}`).toBe(true);
     }
     // One event, not restarted by a stale alert. The drone parks at the end of its path and stays audible, so the event
@@ -293,8 +299,9 @@ describe('LoRa MAC and schedule', () => {
     ];
     const a = network(base, 12345);
     const b = network(moved, 12345);
-    runSeconds(a, 5);
-    runSeconds(b, 5);
+    // The first ranging round is at superframe 4, after the join in superframe 0.
+    runSeconds(a, 20);
+    runSeconds(b, 20);
 
     const ra = a.snapshot().nodes.find((n) => n.id === 1)?.ranging.at(-1);
     const rb = b.snapshot().nodes.find((n) => n.id === 1)?.ranging.at(-1);
@@ -323,4 +330,73 @@ describe('LoRa MAC and schedule', () => {
     expect(first.length).toBe(120);
     expect(second).toEqual(first);
   });
+});
+
+describe('gunshots during a drone event', () => {
+  it('sends SHOT messages in event superframes while a landed drone keeps the network in event mode', () => {
+    // The example drone lands at about 50 s and nodes keep detecting it, so the network stays in event mode. Shots
+    // must still reach the gateway then, not wait for an idle superframe that never comes.
+    const runner = new Runner(parseScenario(exampleScenario));
+    const engine = new AcousticEngine(parseScenario(exampleScenario), runner.world.terrain, { ringSeconds: 25 });
+    engine.start(runner.world);
+    const shotsInEvent = new Map<number, number>();
+    const types = new Set<string>();
+    const ticks = Math.round(100 / TICK_S);
+    for (let i = 0; i < ticks; i++) {
+      runner.stepTick();
+      engine.tick(runner.world);
+      runner.lora.observeFromEngine(runner.world, engine);
+      if (i % 5 === 0) {
+        const snap = runner.lora.snapshot();
+        for (const p of snap.packets) {
+          types.add(p.type);
+          if (p.type === 'SHOT' && snap.mode === 'event') shotsInEvent.set(p.id, p.startS);
+        }
+      }
+    }
+    expect(types.has('DETECT')).toBe(true);
+    expect(shotsInEvent.size).toBeGreaterThan(3);
+  }, 300_000);
+});
+
+describe('startup joins and shot windows', () => {
+  it('every node joins in the first superframe, and idle shots go out in their own windows without collisions', () => {
+    // Shooters only, no drone, so the network stays idle and the windows carry the shots.
+    const scn = parseScenario({ ...exampleScenario, drones: [] } as typeof exampleScenario);
+    const runner = new Runner(scn);
+    const engine = new AcousticEngine(scn, runner.world.terrain, { ringSeconds: 25 });
+    engine.start(runner.world);
+    const packets = new Map<number, PacketView>();
+    const ticks = Math.round(60 / TICK_S);
+    for (let i = 0; i < ticks; i++) {
+      runner.stepTick();
+      engine.tick(runner.world);
+      runner.lora.observeFromEngine(runner.world, engine);
+      if (i % 5 === 0) for (const p of runner.lora.snapshot().packets) packets.set(p.id, p);
+    }
+    const all = [...packets.values()];
+
+    // Joins: one per node in the first superframe, one slot pitch apart. A node whose window has not been named yet
+    // in a beacon may join again later, so the hub can re-announce it.
+    const joins = all.filter((p) => p.type === 'JOIN').sort((a, b) => a.startS - b.startS);
+    const first = joins.filter((p) => p.startS < 4);
+    expect(first.map((p) => p.tx)).toEqual(scenario.nodes.map((n) => n.id));
+    const gaps = first.slice(1).map((p, i) => p.startS - first[i].startS);
+    expect(Math.min(...gaps)).toBeGreaterThan(0.2);
+    // Beacons stay within their window, so the alert window starts on time.
+    for (const p of all.filter((x) => x.type === 'BEACON')) expect(p.airtimeS).toBeLessThan(ALERT_START_S);
+
+    // Each node was given a window by the hub: the windows are distinct and sit in the scheduled region.
+    const shots = all.filter((p) => p.type === 'SHOT' && p.sf === IDLE_SF);
+    expect(shots.length).toBeGreaterThan(5);
+    const collided = shots.filter((p) => p.rx.some((r) => r.fate === 'collision'));
+    expect(collided, 'idle shots collide').toEqual([]);
+    for (const p of shots) {
+      const offset = (p.startS % IDLE_SUPERFRAME_S) - SCHED_START_S;
+      expect(offset).toBeGreaterThanOrEqual(-1e-9);
+      expect(offset).toBeLessThan(SCHED_SLOTS * SCHED_SLOT_S);
+    }
+    // Shots are sent by at least two different nodes in one run, so the windows are really in use.
+    expect(new Set(shots.map((p) => p.tx)).size).toBeGreaterThan(1);
+  }, 300_000);
 });

@@ -51,8 +51,23 @@ Overhead: 7 bytes. LoRa CRC on, explicit header.
 | Part | Time | Use |
 |---|---|---|
 | Beacon | 0–230 ms | `BEACON` (206 ms at 24 B) |
-| Alert window | 250–890 ms | 4 contention slots × 160 ms for `DETECT_START` (144 ms), slotted ALOHA with random slot choice |
-| Scheduled slots | 900–3,980 ms | 14 slots × 220 ms, assigned by the beacon: `HEALTH`, `RANGING_*`, `JOIN`, `ACK` |
+| Scheduled slots | 900–3,980 ms | 14 slots × 220 ms, assigned by the beacon: the node windows (`DETECT_START`, `SHOT`), `HEALTH`, `RANGING_*`, `JOIN` |
+
+The 250–890 ms alert window is gone: a detection now goes out in the sender's own window, so nothing contends.
+
+The scheduled slots are fixed by use, so nothing contends in them:
+
+- **First superframe: join.** Each node sends `JOIN` in a slot named for its id, at a 237 ms pitch, because a
+  `JOIN` (29 B, 0.226 s at SF9) is longer than one 220 ms slot. Thirteen fit the region, so every node joins at
+  startup, before a drone event can keep the network busy. A node that missed the join sends it again in the
+  superframes where `sf mod 4 = 2`, until the hub names its window.
+- **Node windows: every superframe except ranging and join superframes.** The hub gives each joined node a window,
+  slot 0 to 12 in join order, and names it in the beacon. In its window a node sends its pending `DETECT_START`
+  first, or else its queued `SHOT`. No two nodes contend. Windows are named a few per beacon, so the beacon stays
+  inside its 250 ms window (247 ms at 13 nodes).
+- **Health: slot 13**, the spare slot, on any superframe. At most one node is due in a superframe.
+- **Ranging: every fourth superframe, from superframe 4 on**, slots 0 to 6. The windows pause on those superframes,
+  so a detection or shot waits up to 8 s at worst, 4 s usually.
 
 - Each node's `HEALTH` comes round every 75 superframes (5 min), staggered by node id.
 - Worst-case alert latency: ≤ 4 s to the controller, + 4 s until the next beacon switches modes.

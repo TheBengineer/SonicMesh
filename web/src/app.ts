@@ -645,7 +645,13 @@ export function startApp(root: HTMLElement): void {
   );
   root.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach((b) =>
     b.addEventListener('click', () => {
-      setMode(b.dataset.mode as Mode);
+      const picked = b.dataset.mode as Mode;
+      // A second click on the mode that is already on turns it off, back to Select.
+      if (picked !== 'select' && picked === mode) {
+        setMode('select');
+        return;
+      }
+      setMode(picked);
       if (!narrow.matches || b.dataset.mode === 'select') return;
       setToolbarOpen(false);
       flash('Tap the ground to place it.');
