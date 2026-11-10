@@ -10,9 +10,6 @@ export interface ShotReport extends ShotHeard {
   y: number;
 }
 
-// Onsets closer together than this belong to one shot. Nodes 120 m apart differ by about 0.35 s in arrival, so one
-// shot's onsets chain together, while two shots a few seconds apart do not.
-export const CLUSTER_GAP_S = 1.5;
 // The onset time's error: a 1 ms detector window plus the crack's rise.
 const TIME_SIGMA_S = 0.002;
 // An array's bearing error for a shot.
@@ -26,19 +23,16 @@ const MIN_BEARINGS = 2;
 // A fit whose onset times disagree by more than this (about 1.7 m of travel) is two shots, or noise, not one shot.
 const MAX_RESIDUAL_S = 0.005;
 const MIN_RADIUS_M = 8;
-
-// Splits reports into shots: runs of onsets with no gap longer than CLUSTER_GAP_S.
-export function clusterShots(reports: ShotReport[]): ShotReport[][] {
-  const sorted = [...reports].sort((a, b) => a.tS - b.tS);
-  const out: ShotReport[][] = [];
-  let last = -Infinity;
-  for (const r of sorted) {
-    if (r.tS - last > CLUSTER_GAP_S) out.push([]);
-    out[out.length - 1].push(r);
-    last = r.tS;
-  }
-  return out;
-}
+// Onsets agree on one fire time within this, and their bearings within BEARING_TOL_DEG of the spot.
+const TIME_TOL_S = 0.01;
+const BEARING_TOL_DEG = 15;
+// Shots one window can hold. A range fires every ~12 s, so this is well above what a real window needs.
+const MAX_SHOTS = 8;
+// A group must hold this many onsets to be a shot. Three can fit almost anything, so a shot needs more.
+const MIN_GROUP = 4;
+// Two fits this close in place and time are one shot.
+const SAME_SHOT_M = 20;
+const SAME_SHOT_S = 0.05;
 
 interface Score {
   cost: number;
@@ -97,4 +91,114 @@ export function locateShot(reports: ShotReport[], size: readonly [number, number
     residualS: best.residualS,
     radiusM: Math.max(MIN_RADIUS_M, ((2 * BEARING_SIGMA_DEG * Math.PI) / 180) * dBearing),
   };
+}
+
+// The bearing a report would give from (x, y), in degrees, minus its measured one, wrapped to (-180, 180].
+function bearingOff(r: ShotReport, x: number, y: number): number {
+  const pred = (Math.atan2(x - r.x, y - r.y) * 180) / Math.PI;
+  return ((((pred - (r.azDeg ?? 0)) % 360) + 540) % 360) - 180;
+}
+
+// The onsets that one shot at (x, y) explains: those whose fire time agrees with the densest run of them, and whose
+// bearing (where they have one) points at the spot. Every onset in the pool is a candidate, so a shot is found whatever
+// time it was fired, even when another shot went off in the same second.
+function explainedBy(pool: ShotReport[], x: number, y: number): ShotReport[] {
+  const timed = pool
+    .map((r) => ({ r, fire: r.tS - Math.hypot(x - r.x, y - r.y) / SOUND_SPEED_MPS }))
+    .sort((a, b) => a.fire - b.fire);
+  let best: ShotReport[] = [];
+  let lo = 0;
+  for (let hi = 0; hi < timed.length; hi++) {
+    while (timed[hi].fire - timed[lo].fire > 2 * TIME_TOL_S) lo++;
+    const run = timed.slice(lo, hi + 1).map((t) => t.r).filter((r) => r.azDeg === null || Math.abs(bearingOff(r, x, y)) <= BEARING_TOL_DEG);
+    if (run.length > best.length) best = run;
+  }
+  return best;
+}
+
+// Whether one onset belongs to a fitted shot: its fire time matches the shot's, and its bearing points at the spot.
+function isOf(r: ShotReport, fix: ShotFix): boolean {
+  const fire = r.tS - Math.hypot(fix.x - r.x, fix.y - r.y) / SOUND_SPEED_MPS;
+  return Math.abs(fire - fix.tFireS) <= TIME_TOL_S && (r.azDeg === null || Math.abs(bearingOff(r, fix.x, fix.y)) <= BEARING_TOL_DEG);
+}
+
+// Where two bearings from different arrays cross, in front of both. Null when they are nearly parallel or cross behind.
+function crossing(a: ShotReport, b: ShotReport): { x: number; y: number } | null {
+  const [sa, ca] = [Math.sin((a.azDeg! * Math.PI) / 180), Math.cos((a.azDeg! * Math.PI) / 180)];
+  const [sb, cb] = [Math.sin((b.azDeg! * Math.PI) / 180), Math.cos((b.azDeg! * Math.PI) / 180)];
+  const det = -sa * cb + sb * ca;
+  if (Math.abs(det) < 0.1) return null;
+  const [dx, dy] = [b.x - a.x, b.y - a.y];
+  const t = (-dx * cb + sb * dy) / det;
+  const u = (sa * dy - ca * dx) / det;
+  if (t <= 0 || u <= 0) return null;
+  return { x: a.x + t * sa, y: a.y + t * ca };
+}
+
+// Every group the pool could hold as one shot, largest first: each spot where two bearings cross, with the onsets that
+// fit it. A group that mixes two shots usually fails its fit, so the solver falls back to the next one.
+function candidateGroups(pool: ShotReport[], size: readonly [number, number]): ShotReport[][] {
+  const bearings = pool.filter((r) => r.azDeg !== null);
+  const [hx, hy] = [size[0] / 2, size[1] / 2];
+  const groups: ShotReport[][] = [];
+  const seen = new Set<string>();
+  for (let i = 0; i < bearings.length; i++) {
+    for (let j = i + 1; j < bearings.length; j++) {
+      const p = crossing(bearings[i], bearings[j]);
+      if (!p || Math.abs(p.x) > hx || Math.abs(p.y) > hy) continue;
+      const group = explainedBy(pool, p.x, p.y);
+      const bearingsIn = group.filter((r) => r.azDeg !== null).length;
+      if (group.length < MIN_GROUP || bearingsIn < MIN_BEARINGS) continue;
+      const key = groupKey(group);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      groups.push(group);
+    }
+  }
+  return groups.sort((a, b) => b.length - a.length);
+}
+
+function groupKey(group: ShotReport[]): string {
+  return group
+    .map((r) => `${r.id}:${r.tS.toFixed(4)}:${r.azDeg === null ? '-' : r.azDeg.toFixed(1)}`)
+    .sort()
+    .join('|');
+}
+
+// Every shot in one window of reports, each placed by locateShot from the onsets that belong to it. Shots that overlap
+// in time are told apart by where their bearings cross, not by when they arrive. The cache keeps a fit for a shot whose
+// onsets have not changed, so a settled shot is not refitted each update. Returns the fixes and the cache keys in use.
+export function locateShots(
+  reports: ShotReport[],
+  size: readonly [number, number] = [2000, 1400],
+  cache = new Map<string, ShotFix>(),
+): { fixes: ShotFix[]; keys: Set<string> } {
+  const fixes: ShotFix[] = [];
+  const keys = new Set<string>();
+  let pool = [...reports];
+  for (let n = 0; n < MAX_SHOTS; n++) {
+    let accepted: { group: ShotReport[]; fix: ShotFix } | null = null;
+    for (const group of candidateGroups(pool, size)) {
+      const key = groupKey(group);
+      let fix = cache.get(key);
+      if (!fix) {
+        const found = locateShot(group, size);
+        if (!found) continue;
+        fix = found;
+        cache.set(key, fix);
+      }
+      keys.add(key);
+      accepted = { group, fix };
+      break;
+    }
+    if (!accepted) break;
+    const { group, fix } = accepted;
+    // A shot whose onsets were split between two fits is the same shot twice: keep the first.
+    if (!fixes.some((f) => Math.hypot(f.x - fix.x, f.y - fix.y) < SAME_SHOT_M && Math.abs(f.tFireS - fix.tFireS) < SAME_SHOT_S)) {
+      fixes.push(fix);
+    }
+    // Whatever the fit explains is used up, and so is the group itself, so the loop always makes progress.
+    pool = pool.filter((r) => !group.includes(r) && !isOf(r, fix));
+  }
+  return { fixes, keys };
 }

@@ -3,7 +3,7 @@ import { estimateShotBearing } from '../src/detector/bearing';
 import { renderShot, shotRng } from '../src/acoustics/shot';
 import { ARRAY_HALF_M, FS, SOUND_SPEED_MPS } from '../src/acoustics/model';
 import { ARRAY_OFFSETS } from '../src/acoustics/engine';
-import { clusterShots, locateShot, type ShotReport } from '../src/lora/shotLocate';
+import { locateShot, locateShots, type ShotReport } from '../src/lora/shotLocate';
 
 const OFFSETS = ARRAY_OFFSETS.map(([dx, dy]) => [dx * ARRAY_HALF_M, dy * ARRAY_HALF_M] as const);
 
@@ -59,9 +59,21 @@ describe('shot fix', () => {
     expect(locateShot(timesOnly, [2000, 1400])).toBeNull();
   });
 
-  it('keeps shots that are apart in time as separate clusters', () => {
-    const a = reportsFor({ x: 420, y: -200, tFireS: 12.3 }, nodes);
-    const b = reportsFor({ x: 420, y: -200, tFireS: 20.3 }, nodes);
-    expect(clusterShots([...a, ...b]).length).toBe(2);
+  it('tells apart two shots whose onsets overlap in time', () => {
+    // Two shots 0.05 s apart: their onsets interleave at every node, so no time gap separates them.
+    const first = { x: 420, y: -200, tFireS: 12.3 };
+    const second = { x: -200, y: 150, tFireS: 12.35 };
+    const pool = [...reportsFor(first, nodes), ...reportsFor(second, nodes)];
+    const { fixes } = locateShots(pool, [2000, 1400]);
+    expect(fixes.length).toBe(2);
+    for (const truth of [first, second]) {
+      const nearest = Math.min(...fixes.map((f) => Math.hypot(f.x - truth.x, f.y - truth.y)));
+      expect(nearest).toBeLessThan(5);
+    }
+  });
+
+  it('places nothing from noise that has no spot where its bearings cross', () => {
+    const noise: ShotReport[] = nodes.map((n, i) => ({ id: n.id, x: n.x, y: n.y, tS: 12 + 0.1 * i, azDeg: n.array ? (i * 47) % 360 : null }));
+    expect(locateShots(noise, [2000, 1400]).fixes).toEqual([]);
   });
 });

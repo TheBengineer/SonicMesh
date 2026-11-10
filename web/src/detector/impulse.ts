@@ -8,7 +8,7 @@ const RATIO = 16; // 12 dB in power
 const BG_ALPHA = 0.001; // about 1 s, in windows
 // The background learns only from windows within 10 dB of itself. A shot's tail sits well above that, so it is not learned.
 const BG_LEARN_RATIO = 10;
-const HOLD_WINDOWS = 300; // 0.3 s after an onset before another can start
+const HOLD_WINDOWS = 50; // 50 ms after an onset before another can start, long enough for the crack itself
 // A crack rises from the windows just before it, over a few milliseconds. The reverb tail falls away slowly, so it never
 // rises 20 dB above what came just before. This short memory is what keeps the tail of one shot from hiding the next.
 const RECENT_DECAY = Math.exp(-1 / 5);

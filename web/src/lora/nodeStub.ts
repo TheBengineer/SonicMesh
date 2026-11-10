@@ -25,6 +25,8 @@ export const MAX_DETECT_SPANS = 8;
 const MAX_SHOT_TIMES = 8;
 // Shots kept for the gateway's fixes. A few seconds of a busy range.
 export const MAX_SHOT_REPORTS = 64;
+// A bearing from less audio than this (6 ms) is too coarse to use.
+const MIN_BEARING_SAMPLES = 96;
 // The harmonic detector skips any frame that overlaps a shot and this long after it, so a shot cannot break or start a
 // drone track. A drone's track holds for about a second, so a quarter-second gap leaves it intact.
 const SHOT_MASK_S = 0.6;
@@ -191,6 +193,8 @@ export class NodeStub {
   // Every recent shot this node heard. An array's entries get a bearing once the audio after the onset has arrived.
   readonly shots: ShotHeard[] = [];
   private pendingShots: { heard: ShotHeard; sample: number }[] = [];
+  // Sample indices of the newest onsets, so a shot's bearing window can stop where the next onset begins.
+  private readonly recentOnsets: number[] = [];
   private readonly impulse = new ImpulseDetector();
   // Sample indices of recent shot onsets, for masking the harmonic detector.
   private readonly shotSamples: number[] = [];
@@ -254,6 +258,8 @@ export class NodeStub {
       this.shotTimesS.push(i / FS);
       if (this.shotTimesS.length > MAX_SHOT_TIMES) this.shotTimesS.shift();
       this.shotSamples.push(i);
+      this.recentOnsets.push(i);
+      if (this.recentOnsets.length > MAX_SHOT_REPORTS) this.recentOnsets.shift();
       const heard: ShotHeard = { tS: i / FS, azDeg: null };
       this.shots.push(heard);
       if (this.shots.length > MAX_SHOT_REPORTS) this.shots.shift();
@@ -261,15 +267,21 @@ export class NodeStub {
     }
   }
 
-  // Takes the bearing of each shot whose onset window has reached every array mic. Shots too old for the rings are dropped.
+  // Takes the bearing of each shot once its onset window has reached every array mic. The window ends where the next
+  // onset at this node begins, so a close shot's crack does not bias it. Too short a window gives no bearing.
   listenForShotBearing(rings: RingView[], offsets: readonly (readonly [number, number])[]): void {
     if (this.pendingShots.length === 0 || rings.length !== offsets.length) return;
     this.pendingShots = this.pendingShots.filter(({ heard, sample }) => {
-      if (rings[0].written < sample + SHOT_BEARING_SAMPLES) return true;
+      const next = this.recentOnsets.find((o) => o > sample) ?? null;
+      if (next === null && rings[0].written < sample + SHOT_BEARING_SAMPLES) return true;
+      const len = next === null ? SHOT_BEARING_SAMPLES : Math.min(SHOT_BEARING_SAMPLES, next - sample);
+      if (len < MIN_BEARING_SAMPLES) return false;
       const frames: Float32Array[] = [];
       for (const r of rings) {
+        const part = new Float32Array(len);
+        if (!r.read(sample, part)) return false;
         const f = new Float32Array(SHOT_BEARING_SAMPLES);
-        if (!r.read(sample, f)) return false;
+        f.set(part);
         frames.push(f);
       }
       heard.azDeg = estimateShotBearing(frames, offsets);

@@ -30,7 +30,7 @@ import { ARRAY_OFFSETS } from '../acoustics/engine';
 import { ARRAY_HALF_M } from '../acoustics/model';
 import { NodeStub, RANGING_MAX_LINK_M, pitchFits, measureRange, type Detection, type HealthValue, type RingView, type NodeObservation, type TruthTarget } from './nodeStub';
 import type { GatewayView, GridSlot, HealthView, LoraView, MessageView, NodeView, PacketView, RangingView, RxView, ShotFix } from './types';
-import { clusterShots, locateShot, type ShotReport } from './shotLocate';
+import { locateShots, type ShotReport } from './shotLocate';
 
 export const IDLE_SUPERFRAME_S = 4;
 export const EVENT_SUPERFRAME_S = 0.5;
@@ -421,7 +421,7 @@ export class LoRaNetwork {
     this.updateShotFixes(tS);
   }
 
-  // Places each recent shot that enough nodes heard, from their onset times and array bearings.
+  // Places every recent shot that enough nodes heard, from their onset times and array bearings.
   private updateShotFixes(tS: number): void {
     const reports: ShotReport[] = [];
     for (const n of this.nodes) {
@@ -429,20 +429,7 @@ export class LoRaNetwork {
         if (h.tS >= tS - SHOT_FIX_WINDOW_S) reports.push({ ...h, id: n.spec.id, x: n.spec.x, y: n.spec.y });
       }
     }
-    const fixes: ShotFix[] = [];
-    const keys = new Set<string>();
-    for (const shot of clusterShots(reports)) {
-      // A shot's key changes when a node or a bearing joins it, so a late report refits it.
-      const bearings = shot.filter((r) => r.azDeg !== null).length;
-      const key = `${shot[0].tS.toFixed(3)}:${shot.length}:${bearings}`;
-      keys.add(key);
-      let fix = this.shotFitCache.get(key);
-      if (!fix) {
-        fix = locateShot(shot, this.terrain.size) ?? undefined;
-        if (fix) this.shotFitCache.set(key, fix);
-      }
-      if (fix) fixes.push(fix);
-    }
+    const { fixes, keys } = locateShots(reports, this.terrain.size, this.shotFitCache);
     for (const k of [...this.shotFitCache.keys()]) if (!keys.has(k)) this.shotFitCache.delete(k);
     this.shotFixes = fixes;
   }
