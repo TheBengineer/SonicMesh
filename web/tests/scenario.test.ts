@@ -17,12 +17,15 @@ describe('scenario schema', () => {
     const s = parseScenario(exampleScenario);
     expect(s.nodes).toHaveLength(13);
     const xs = s.nodes.map((n) => n.x);
-    for (let i = 1; i < xs.length; i++) expect(xs[i] - xs[i - 1]).toBe(120);
+    // Spacing averages 120 m; each gap is within 40 m of that, so the jitter stays small.
+    for (let i = 1; i < xs.length; i++) expect(Math.abs(xs[i] - xs[i - 1] - 120)).toBeLessThan(40);
     expect(s.nodes.filter((n) => n.kind === 'array').map((n) => n.id)).toEqual([3, 6, 9, 12]);
-    // Staggered either side of the line, which lets the fit tell the two sides apart. Arrays fall on both sides.
-    // Nodes zig-zag 60 m either side of the line, so travel times tell the two sides apart.
-    for (const n of s.nodes) expect(Math.abs(n.y)).toBe(60);
-    expect(new Set(s.nodes.filter((n) => n.kind === 'array').map((n) => n.y)).size).toBe(2);
+    // Nodes sit near the line, jittered so they are not on two exact rows, and arrays fall on both sides.
+    // Travel times still tell the two sides apart, because the rows are not perfectly parallel.
+    for (const n of s.nodes) expect(Math.abs(n.y)).toBeLessThan(100);
+    expect(new Set(s.nodes.map((n) => n.y)).size).toBeGreaterThan(10);
+    // Arrays fall on both sides of the line.
+    expect(s.nodes.filter((n) => n.kind === 'array').some((n) => n.y > 0) && s.nodes.filter((n) => n.kind === 'array').some((n) => n.y < 0)).toBe(true);
     expect(s.gateway.y).toBeLessThan(0);
     expect(s.drones.map((d) => d.class)).toEqual(['fpv']);
     expect(s.drones[0].path).toMatchObject({ kind: 'terrain_follow', speed_mps: 20, clearance_m: 20 });

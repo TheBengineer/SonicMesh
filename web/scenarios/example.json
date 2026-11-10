@@ -11,19 +11,19 @@
   },
   "gateway": { "x": 0, "y": -90 },
   "nodes": [
-    { "id": 1, "kind": "detector", "x": -720, "y": 60 },
-    { "id": 2, "kind": "detector", "x": -600, "y": -60 },
-    { "id": 3, "kind": "array", "x": -480, "y": 60 },
-    { "id": 4, "kind": "detector", "x": -360, "y": -60 },
-    { "id": 5, "kind": "detector", "x": -240, "y": 60 },
-    { "id": 6, "kind": "array", "x": -120, "y": -60 },
-    { "id": 7, "kind": "detector", "x": 0, "y": 60 },
-    { "id": 8, "kind": "detector", "x": 120, "y": -60 },
-    { "id": 9, "kind": "array", "x": 240, "y": 60 },
-    { "id": 10, "kind": "detector", "x": 360, "y": -60 },
-    { "id": 11, "kind": "detector", "x": 480, "y": 60 },
-    { "id": 12, "kind": "array", "x": 600, "y": -60 },
-    { "id": 13, "kind": "detector", "x": 720, "y": 60 }
+    { "id": 1, "kind": "detector", "x": -721, "y": 76 },
+    { "id": 2, "kind": "detector", "x": -609, "y": -49 },
+    { "id": 3, "kind": "array", "x": -470, "y": 81 },
+    { "id": 4, "kind": "detector", "x": -357, "y": -65 },
+    { "id": 5, "kind": "detector", "x": -249, "y": 70 },
+    { "id": 6, "kind": "array", "x": -120, "y": -71 },
+    { "id": 7, "kind": "detector", "x": 0, "y": 69 },
+    { "id": 8, "kind": "detector", "x": 134, "y": -60 },
+    { "id": 9, "kind": "array", "x": 254, "y": 43 },
+    { "id": 10, "kind": "detector", "x": 362, "y": -41 },
+    { "id": 11, "kind": "detector", "x": 497, "y": 63 },
+    { "id": 12, "kind": "array", "x": 605, "y": -39 },
+    { "id": 13, "kind": "detector", "x": 714, "y": 46 }
   ],
   "drones": [
     {

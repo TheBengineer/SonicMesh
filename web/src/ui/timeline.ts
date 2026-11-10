@@ -32,8 +32,9 @@ export interface TimelineHandlers {
 
 const TX_COLOR: Record<string, string> = {
   BEACON: '#3ddc84',
-  DETECT_START: '#ffb347',
-  DETECT: '#ff7b54',
+  DETECT_START: '#e879f9',
+  DETECT: '#e879f9',
+  SHOT: '#ff3b3b',
   SNIPPET: '#c86ad6',
   HEALTH: '#5fb4ff',
   RANGING_RESULT: '#d6a23f',
