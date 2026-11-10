@@ -65,6 +65,14 @@ describe('shot waveform', () => {
     expect(Array.from(a.slice(0, 500))).not.toEqual(Array.from(c.slice(0, 500)));
   });
 
+  it('has died away by its last 10 ms, so it does not end in a click', () => {
+    const w = renderShot(rng0(13));
+    const pk = Math.max(...Array.from(w, Math.abs));
+    const tail = w.slice(w.length - Math.round(0.01 * FS));
+    const rms = Math.sqrt(tail.reduce((s, v) => s + v * v, 0) / tail.length);
+    expect(20 * Math.log10(rms / pk)).toBeLessThan(-60);
+  });
+
   it('decays with a t30 close to the recordings (about 0.6 s)', () => {
     const w = renderShot(rng0(11));
     const pk = Math.max(...Array.from(w, Math.abs));

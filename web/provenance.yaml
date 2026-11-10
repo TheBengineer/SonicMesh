@@ -332,7 +332,7 @@ components:
     name: Gunshots from a range or shooter
     tag: ASSUMED
     milestone: M1
-    summary: "A shot is a crack, a low muzzle blast and a decaying reverb tail, peak 130 dB SPL at 1 m (assumed). Each shot is varied in pitch, level and tail. Shots reach the mics through the drone's path: distance, air, terrain blocking and the ground reflection. The mics overload at 130 dB SPL."
+    summary: "A shot is one crack with a decaying tail, peak 130 dB SPL at 1 m (assumed). The muzzle blast and the bullet's shockwave are not modelled separately. Each shot is varied in pitch, level and tail. Shots reach the mics through the drone's path: distance, air, terrain blocking and the ground reflection. The mics overload at 130 dB SPL."
     evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/web/src/acoustics/shot.ts"
     upgrade: "ASSUMED to MODELLED with recorded shots at known distances, fitting the level and the overload point."
     bias: "The decay and band balance are fitted to four target-shooting recordings close to the mic, not to field recordings at distance. No wind, no buildings, one shot type."

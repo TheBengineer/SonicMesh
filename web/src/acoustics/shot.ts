@@ -5,7 +5,9 @@ import { FS, REF_PA } from './model';
 // ASSUMED: a rifle-class shot, peak level at 1 m. The recordings fix the shape and decay, not this level, which is not
 // measured. The ledger tags it.
 export const SHOT_PEAK_DB_1M = 130;
-export const SHOT_LEN_S = 0.8;
+// Long enough for the tail to fall about 60 dB below its peak (rt60 about 2.2 s). A shorter shot is cut off while it
+// still rings, and the cut is an audible click.
+export const SHOT_LEN_S = 2.4;
 
 // Fitted offline to 26 shots from four recordings (see data/gunshots, local only): the envelope, the decay
 // (t30 about 0.61 s in the recordings) and the band balance (low and high about 7 dB under the mid band). The
@@ -13,25 +15,23 @@ export const SHOT_LEN_S = 0.8;
 export const SHOT_FIT = {
   crackS: 0.0006,
   crackTauS: 0.0005,
-  blastDelayS: 0.002,
-  blastTauS: 0.02,
-  blastHz: 90,
-  blastRel: 0.3,
   tailRel: 0.9,
+  // The tail fades in over this long, so the crack is the only event: no separate knock after it.
+  tailAttackS: 0.03,
   tailRt60S: 2.2,
   tailLoHz: 300,
   tailHiHz: 5000,
 };
 
 // Shot-to-shot variation, as a fraction of the fitted value, so no two shots from one gun sound the same.
-const VARY = { blastHz: 0.15, blastRel: 0.3, rt60: 0.2, gainDb: 3 };
+const VARY = { rt60: 0.2, gainDb: 3 };
 const Q_BAND = Math.SQRT1_2;
 
 // One shot as pressure in Pa at 1 m, with the nominal crack peak at SHOT_PEAK_DB_1M. The crack is under-sampled at
 // 16 kHz, so its shape is approximate.
-//   crack: a short N-wave, positive then negative, decaying.
-//   muzzle blast: a low damped tone that follows the crack, with its pitch and level varied per shot.
-//   tail: band-limited noise with an exponential decay, a stand-in for the reverberant field around the shooter.
+//   crack: a short N-wave, positive then negative, decaying. The one event a shot makes.
+//   tail: band-limited noise with an exponential decay that fades in, a stand-in for the reverberant field around the shooter.
+// The muzzle blast and the bullet's shockwave are not modelled separately.
 // Typical peak of a shot with its reverb tail, so SHOT_PEAK_DB_1M is the level a shot reaches, not just its crack.
 const TAIL_PEAK = (() => {
   let sum = 0;
@@ -52,8 +52,6 @@ export function renderShot(rng: Rng): Float64Array {
 function renderUnit(rng: Rng, scale = 1): Float64Array {
   const f = SHOT_FIT;
   const r = () => 2 * nextFloat(rng) - 1;
-  const blastHz = f.blastHz * (1 + VARY.blastHz * r());
-  const blastRel = f.blastRel * (1 + VARY.blastRel * r());
   const rt60 = f.tailRt60S * (1 + VARY.rt60 * r());
   const gain = scale * 10 ** ((VARY.gainDb * r()) / 20);
   const n = Math.round(SHOT_LEN_S * FS);
@@ -64,11 +62,8 @@ function renderUnit(rng: Rng, scale = 1): Float64Array {
     const t = i / FS;
     let p = 0;
     if (t < f.crackS) p += (1 - (2 * t) / f.crackS) * Math.exp(-t / f.crackTauS);
-    if (t >= f.blastDelayS) {
-      const v = t - f.blastDelayS;
-      p += blastRel * Math.exp(-v / f.blastTauS) * Math.sin(2 * Math.PI * blastHz * v);
-    }
-    p += f.tailRel * lp.process(hp.process(gauss(rng))) * Math.exp((-6.9 * t) / rt60);
+    const attack = Math.min(1, t / f.tailAttackS);
+    p += f.tailRel * attack * lp.process(hp.process(gauss(rng))) * Math.exp((-6.9 * t) / rt60);
     out[i] = gain * p;
   }
   return out;
