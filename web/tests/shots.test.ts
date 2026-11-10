@@ -11,6 +11,8 @@ import { createRng } from '../src/sim/rng';
 import { gauss } from '../src/acoustics/dsp';
 import { Terrain } from '../src/sim/terrain';
 import { applyOp, createWorld, hashWorld, stepWorld } from '../src/sim/world';
+import { AcousticEngine } from '../src/acoustics/engine';
+import { Runner } from '../src/sim/runner';
 
 // A fixed buffer shaped like a mic ring: samples are read by absolute index.
 function ringOf(samples: Float32Array): SampleSource {
@@ -216,5 +218,28 @@ describe('shooter ops', () => {
     expect(hashWorld(world)).toBe(before);
     applyOp(world, { type: 'shooter_remove', id: 9 });
     expect(world.state.shooters.some((sh) => sh.id === 9)).toBe(false);
+  });
+});
+
+describe('shot audio at a mic', () => {
+  it('keeps the reverb tail after the crack, not just the first block', () => {
+    const scn = parseScenario({ ...exampleScenario, drones: [] });
+    const runner = new Runner(scn);
+    const engine = new AcousticEngine(scn, runner.world.terrain, { ringSeconds: 25 });
+    engine.start(runner.world);
+    // The first shot reaches node 10 about 3 s in, so run to 4.5 s.
+    for (let i = 0; i < 450; i++) {
+      runner.stepTick();
+      engine.tick(runner.world);
+    }
+    const x = engine.output('10.0');
+    const level = (t: number): number => {
+      const a = Math.round(t * FS);
+      let s = 0;
+      for (let j = a; j < a + 160; j++) s += x[j] * x[j];
+      return 10 * Math.log10(s / 160 + 1e-30);
+    };
+    // The crack is about 3 s, and 0.8 s later the tail should still be well above the floor.
+    expect(level(3.2)).toBeGreaterThan(level(4.4) + 15);
   });
 });

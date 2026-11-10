@@ -47,6 +47,8 @@ interface Shooter {
   st: ShooterState;
   log: PoseLog;
   src: SampleRing;
+  // Shots still ringing, each with the sample it starts at. Their audio is added in block by block.
+  shots: { start: number; wave: Float64Array }[];
 }
 
 interface Mic {
@@ -109,11 +111,16 @@ export class AcousticEngine {
     // A shot that starts at tick T-1 begins at the first sample of this block.
     for (const sh of this.shooters.values()) {
       // Clear the block first. The ring wraps, so an unwritten sample would otherwise read an old shot's audio.
-      for (let i = 0; i < BLOCK; i++) sh.src.put(n0 + i, 0);
       const k = shotStartingAt(sh.st, T - 1);
-      if (k === null) continue;
-      const wave = renderShot(shotRng(this.scn.seed, sh.st.id, k));
-      for (let i = 0; i < wave.length; i++) sh.src.put(n0 + i, wave[i]);
+      if (k !== null) sh.shots.push({ start: n0, wave: renderShot(shotRng(this.scn.seed, sh.st.id, k)) });
+      sh.shots = sh.shots.filter((s) => s.start + s.wave.length > n0);
+      for (let i = 0; i < BLOCK; i++) sh.src.put(n0 + i, 0);
+      for (const s of sh.shots) {
+        for (let i = 0; i < BLOCK; i++) {
+          const j = n0 + i - s.start;
+          if (j >= 0 && j < s.wave.length) sh.src.put(n0 + i, sh.src.get(n0 + i) + s.wave[j]);
+        }
+      }
     }
     for (const m of this.mics.values()) this.renderMic(m, n0);
   }
@@ -262,7 +269,7 @@ export class AcousticEngine {
       seenShooters.add(st.id);
       let sh = this.shooters.get(st.id);
       if (!sh) {
-        sh = { st, log: new PoseLog(), src: new SampleRing(SHOOTER_SAMPLES) };
+        sh = { st, log: new PoseLog(), src: new SampleRing(SHOOTER_SAMPLES), shots: [] };
         this.shooters.set(st.id, sh);
       }
       sh.st = st;

@@ -4,7 +4,7 @@ import { FS, REF_PA } from './model';
 
 // ASSUMED: a rifle-class shot, peak level at 1 m. The recordings fix the shape and decay, not this level, which is not
 // measured. The ledger tags it.
-export const SHOT_PEAK_DB_1M = 130;
+export const SHOT_PEAK_DB_1M = 140;
 // Long enough for the tail to fall about 60 dB below its peak (rt60 about 2.2 s). A shorter shot is cut off while it
 // still rings, and the cut is an audible click.
 export const SHOT_LEN_S = 2.4;

@@ -20,7 +20,8 @@ describe('scenario schema', () => {
     for (let i = 1; i < xs.length; i++) expect(xs[i] - xs[i - 1]).toBe(120);
     expect(s.nodes.filter((n) => n.kind === 'array').map((n) => n.id)).toEqual([3, 6, 9, 12]);
     // Staggered either side of the line, which lets the fit tell the two sides apart. Arrays fall on both sides.
-    for (const n of s.nodes) expect(Math.abs(n.y)).toBe(30);
+    // Nodes zig-zag 60 m either side of the line, so travel times tell the two sides apart.
+    for (const n of s.nodes) expect(Math.abs(n.y)).toBe(60);
     expect(new Set(s.nodes.filter((n) => n.kind === 'array').map((n) => n.y)).size).toBe(2);
     expect(s.gateway.y).toBeLessThan(0);
     expect(s.drones.map((d) => d.class)).toEqual(['fpv']);

@@ -21,6 +21,8 @@ const COARSE_M = 10;
 const FINE_M = 1;
 const FINE_SPAN_M = 15;
 const MIN_NODES = 3;
+// Two bearings: nodes on one line give travel times that are symmetric about it, so a single bearing cannot pick the side.
+const MIN_BEARINGS = 2;
 // A fit whose onset times disagree by more than this (about 1.7 m of travel) is two shots, or noise, not one shot.
 const MAX_RESIDUAL_S = 0.005;
 const MIN_RADIUS_M = 8;
@@ -66,9 +68,9 @@ function score(x: number, y: number, reports: ShotReport[]): Score {
 }
 
 // Places one shot inside a world of the given size, centred on the origin (the demo's default size when none is given).
-// Null without two nodes or without a bearing.
+// Null without three nodes or without two bearings.
 export function locateShot(reports: ShotReport[], size: readonly [number, number] = [2000, 1400]): ShotFix | null {
-  if (reports.length < MIN_NODES || !reports.some((r) => r.azDeg !== null)) return null;
+  if (reports.length < MIN_NODES || reports.filter((r) => r.azDeg !== null).length < MIN_BEARINGS) return null;
   const [hx, hy] = [size[0] / 2, size[1] / 2];
   let best = { x: 0, y: 0, ...score(0, 0, reports) };
   for (let x = -hx; x <= hx; x += COARSE_M) {

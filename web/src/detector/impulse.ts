@@ -4,7 +4,7 @@ import { FS, REF_PA } from '../acoustics/model';
 // background and reports a window that is well above it. This is a level test, not the classifier the field
 // node will run: it does not tell a shot from a slam or a firework.
 const WIN = FS / 1000;
-const RATIO = 100; // 20 dB in power
+const RATIO = 16; // 12 dB in power
 const BG_ALPHA = 0.001; // about 1 s, in windows
 // The background learns only from windows within 10 dB of itself. A shot's tail sits well above that, so it is not learned.
 const BG_LEARN_RATIO = 10;
