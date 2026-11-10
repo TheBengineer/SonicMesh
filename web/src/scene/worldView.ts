@@ -331,6 +331,8 @@ const FLASH_S = 0.08;
 const WAVE_S = 1.5;
 const HEARD_S = 1.5;
 const HEARD_RADIUS_M = 40;
+// How long a placed shot stays marked on the map.
+const FIX_SHOW_S = 4;
 
 function buildGateway(): THREE.Group {
   const g = new THREE.Group();
@@ -660,6 +662,16 @@ export class WorldView {
         this.shotGroup.add(ring);
       }
     }
+    for (const f of lora.shotFixes) {
+      const age = nowS - f.tFireS;
+      if (age < 0 || age > FIX_SHOW_S) continue;
+      const mat = new THREE.MeshBasicMaterial({ color: 0xff4d6d, transparent: true, opacity: 0.9 * (1 - age / FIX_SHOW_S), side: THREE.DoubleSide, depthWrite: false, depthTest: false });
+      const mark = new THREE.Mesh(new THREE.RingGeometry(2.5, 3.5, 24), mat);
+      mark.rotation.x = -Math.PI / 2;
+      mark.position.copy(toScene(f.x, f.y, world.terrain.height(f.x, f.y) + 3));
+      mark.raycast = () => {};
+      this.shotGroup.add(mark);
+    }
   }
 
   // What nodes report: a pulse and pitch on each detecting node, an array's bearing arrow, a band over each bogie, and a
@@ -970,6 +982,27 @@ export class WorldView {
         ctx.arc(sx(n.x), sy(n.y), 6 + (HEARD_RADIUS_M * age) / HEARD_S / scale, 0, Math.PI * 2);
         ctx.stroke();
       }
+    }
+    for (const f of lora?.shotFixes ?? []) {
+      const age = nowS - f.tFireS;
+      if (age < 0 || age > FIX_SHOW_S) continue;
+      ctx.strokeStyle = `rgba(255, 77, 109, ${0.9 * (1 - age / FIX_SHOW_S)})`;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      for (const id of f.nodeIds) {
+        const n = state.nodes.find((node) => node.id === id);
+        if (!n) continue;
+        ctx.moveTo(sx(n.x), sy(n.y));
+        ctx.lineTo(sx(f.x), sy(f.y));
+      }
+      ctx.stroke();
+      const r = 6;
+      ctx.beginPath();
+      ctx.moveTo(sx(f.x) - r, sy(f.y) - r);
+      ctx.lineTo(sx(f.x) + r, sy(f.y) + r);
+      ctx.moveTo(sx(f.x) + r, sy(f.y) - r);
+      ctx.lineTo(sx(f.x) - r, sy(f.y) + r);
+      ctx.stroke();
     }
 
     if (lora) {

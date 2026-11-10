@@ -124,6 +124,21 @@ export interface GridSlot {
   kind: 'beacon' | 'alert' | 'slot' | 'burst';
 }
 
+// A shot as one node heard it: its onset in sim seconds and, for an array, the bearing it measured.
+export interface ShotHeard {
+  tS: number;
+  azDeg: number | null;
+}
+
+// Where the gateway places a shot, from the onset times of the nodes that heard it and the array bearings.
+export interface ShotFix {
+  x: number;
+  y: number;
+  tFireS: number;
+  nodeIds: number[];
+  residualS: number;
+}
+
 export interface LoraView {
   mode: 'idle' | 'event';
   superframe: number;
@@ -133,6 +148,7 @@ export interface LoraView {
   packets: PacketView[];
   nodes: NodeView[];
   bogies: Bogie[];
+  shotFixes: ShotFix[];
   gateway: GatewayView;
   grid: GridSlot[];
 }

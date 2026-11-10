@@ -332,10 +332,19 @@ components:
     name: Gunshots from a range or shooter
     tag: ASSUMED
     milestone: M1
-    summary: "A shot is a crack, a low muzzle blast and a decaying reverb tail, peak 150 dB SPL at 1 m (assumed). Each shot is varied in pitch, level and tail. A range's berm adds an echo. Shots reach the mics through the drone's path: distance, air, terrain blocking and the ground reflection. The mics overload at 130 dB SPL."
+    summary: "A shot is a crack, a low muzzle blast and a decaying reverb tail, peak 130 dB SPL at 1 m (assumed). Each shot is varied in pitch, level and tail. Shots reach the mics through the drone's path: distance, air, terrain blocking and the ground reflection. The mics overload at 130 dB SPL."
     evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/web/src/acoustics/shot.ts"
-    upgrade: "ASSUMED to MODELLED with recorded shots at known distances, fitting the level, the berm echo and the overload point."
+    upgrade: "ASSUMED to MODELLED with recorded shots at known distances, fitting the level and the overload point."
     bias: "The decay and band balance are fitted to four target-shooting recordings close to the mic, not to field recordings at distance. No wind, no buildings, one shot type."
+
+  - id: shot-location
+    name: Shot location from onsets and array bearings
+    tag: MODELLED
+    milestone: M1
+    summary: "The gateway groups the shot onsets that nodes report and fits a spot to them: onset times give the differences in travel time between nodes, and each array's bearing picks the side of the line. Each array's bearing comes from a broadband delay-and-sum over the crack's first 32 ms."
+    evidence: "https://github.com/TheBengineer/SonicMesh/blob/main/web/src/lora/shotLocate.ts"
+    upgrade: "MODELLED to REAL with recorded shots at surveyed positions, and with the onset times the nodes' own clocks report over LoRa."
+    bias: "Onset times come from the simulation's one shared clock, not the network's synced clocks. Shots fired within about 1.5 s of each other at different places would merge into one fit. Without a bearing, a shot is not placed, so a line of nodes with no array cannot place one."
 
   - id: impulse-onset
     name: Shot onset detector at nodes

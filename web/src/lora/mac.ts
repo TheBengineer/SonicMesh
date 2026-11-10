@@ -29,7 +29,8 @@ import { BogieTracker, type Bogie } from './bogies';
 import { ARRAY_OFFSETS } from '../acoustics/engine';
 import { ARRAY_HALF_M } from '../acoustics/model';
 import { NodeStub, RANGING_MAX_LINK_M, pitchFits, measureRange, type Detection, type HealthValue, type RingView, type NodeObservation, type TruthTarget } from './nodeStub';
-import type { GatewayView, GridSlot, HealthView, LoraView, MessageView, NodeView, PacketView, RangingView, RxView } from './types';
+import type { GatewayView, GridSlot, HealthView, LoraView, MessageView, NodeView, PacketView, RangingView, RxView, ShotFix } from './types';
+import { clusterShots, locateShot, type ShotReport } from './shotLocate';
 
 export const IDLE_SUPERFRAME_S = 4;
 export const EVENT_SUPERFRAME_S = 0.5;
@@ -88,6 +89,8 @@ interface EngineView {
 
 const PITCH_LOOKBACK_S = 0.2;
 const BOGIE_PERIOD_TICKS = 25;
+// Shots older than this drop off the map, and their fixes with them.
+const SHOT_FIX_WINDOW_S = 8;
 const MIC_OFFSETS = ARRAY_OFFSETS.map(([a, b]) => [a * ARRAY_HALF_M, b * ARRAY_HALF_M] as const);
 
 interface PendingAlert {
@@ -194,6 +197,9 @@ export class LoRaNetwork {
   private nodes: NetNode[] = [];
   private readonly bogieTracker: BogieTracker;
   private bogies: Bogie[] = [];
+  private shotFixes: ShotFix[] = [];
+  // Fits already made, by shot, so a settled shot is not refitted every update.
+  private readonly shotFitCache = new Map<string, ShotFix>();
   private truth: TruthTarget[] = [];
   private mode: 'idle' | 'event' = 'idle';
   private superframe = 0;
@@ -350,6 +356,7 @@ export class LoRaNetwork {
       const comb = node.stub.hear(ring);
       if (node.spec.kind === 'array') {
         const rings = ARRAY_OFFSETS.map((_, j) => engine.micRing(`${n.id}.${j}`)).filter((r) => r !== undefined);
+        node.stub.listenForShotBearing(rings, MIC_OFFSETS);
         node.stub.listenForBearing(this.nowS, rings, MIC_OFFSETS);
       }
       const heardId = comb.on && comb.f0Hz > 0 ? this.droneAtPitch(comb.f0Hz, node, key, engine) : null;
@@ -411,6 +418,33 @@ export class LoRaNetwork {
       .filter((n) => n.stub.detecting && n.stub.pitchHz > 0)
       .map((n) => ({ id: n.spec.id, x: n.spec.x, y: n.spec.y, pitchHz: n.stub.pitchHz, bearingDeg: n.stub.bearingDeg, peak: n.stub.peak }));
     this.bogies = this.bogieTracker.update(tS, reports);
+    this.updateShotFixes(tS);
+  }
+
+  // Places each recent shot that enough nodes heard, from their onset times and array bearings.
+  private updateShotFixes(tS: number): void {
+    const reports: ShotReport[] = [];
+    for (const n of this.nodes) {
+      for (const h of n.stub.shots) {
+        if (h.tS >= tS - SHOT_FIX_WINDOW_S) reports.push({ ...h, id: n.spec.id, x: n.spec.x, y: n.spec.y });
+      }
+    }
+    const fixes: ShotFix[] = [];
+    const keys = new Set<string>();
+    for (const shot of clusterShots(reports)) {
+      // A shot's key changes when a node or a bearing joins it, so a late report refits it.
+      const bearings = shot.filter((r) => r.azDeg !== null).length;
+      const key = `${shot[0].tS.toFixed(3)}:${shot.length}:${bearings}`;
+      keys.add(key);
+      let fix = this.shotFitCache.get(key);
+      if (!fix) {
+        fix = locateShot(shot, this.terrain.size) ?? undefined;
+        if (fix) this.shotFitCache.set(key, fix);
+      }
+      if (fix) fixes.push(fix);
+    }
+    for (const k of [...this.shotFitCache.keys()]) if (!keys.has(k)) this.shotFitCache.delete(k);
+    this.shotFixes = fixes;
   }
 
   private targetOf(node: NetNode): TruthTarget | null {
@@ -954,6 +988,7 @@ export class LoRaNetwork {
       packets: this.packets,
       nodes: this.nodes.map((n) => this.nodeView(n)),
       bogies: this.bogies,
+      shotFixes: this.shotFixes,
       gateway: this.gatewayView(),
       grid: this.grid,
     };

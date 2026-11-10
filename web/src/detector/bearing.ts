@@ -84,6 +84,52 @@ export function estimateBearing(frames: ArrayLike<number>[], offsets: readonly (
   return { azDeg: bestAz, elDeg: bestEl };
 }
 
+// A shot is broadband, with no pitch to follow, so its bearing uses every bin from SHOT_LO_HZ to MAX_HZ over a short
+// window from the onset. The window is short so the reverb tail is left out; the crack and muzzle blast carry the timing.
+export const SHOT_BEARING_SAMPLES = 512;
+const SHOT_LO_HZ = 150;
+const SHOT_BIN_HZ = FS / SHOT_BEARING_SAMPLES;
+const SHOT_WINDOW = hann(SHOT_BEARING_SAMPLES);
+
+// The bearing of a shot's onset in degrees, measured clockwise from +y, in the horizontal plane. Null when no bin is in range.
+export function estimateShotBearing(frames: ArrayLike<number>[], offsets: readonly (readonly [number, number])[]): number | null {
+  const spectra = frames.map((x) => {
+    const re = new Float64Array(SHOT_BEARING_SAMPLES);
+    const im = new Float64Array(SHOT_BEARING_SAMPLES);
+    for (let i = 0; i < SHOT_BEARING_SAMPLES; i++) re[i] = x[i] * SHOT_WINDOW[i];
+    fft(re, im);
+    return { re, im };
+  });
+  const bins: number[] = [];
+  for (let k = Math.ceil(SHOT_LO_HZ / SHOT_BIN_HZ); k * SHOT_BIN_HZ <= MAX_HZ; k++) bins.push(k);
+  if (bins.length === 0) return null;
+
+  let bestPower = -1;
+  let bestAz = 0;
+  for (let azDeg = 0; azDeg < 360; azDeg += AZ_STEP_DEG) {
+    const az = (azDeg * Math.PI) / 180;
+    const [ux, uy] = [Math.sin(az), Math.cos(az)];
+    let power = 0;
+    for (const k of bins) {
+      const w = (2 * Math.PI * k * SHOT_BIN_HZ) / SOUND_SPEED_MPS;
+      let sumRe = 0;
+      let sumIm = 0;
+      spectra.forEach((s, m) => {
+        const phase = -w * (offsets[m][0] * ux + offsets[m][1] * uy);
+        const [c, d] = [Math.cos(phase), Math.sin(phase)];
+        sumRe += s.re[k] * c - s.im[k] * d;
+        sumIm += s.re[k] * d + s.im[k] * c;
+      });
+      power += sumRe * sumRe + sumIm * sumIm;
+    }
+    if (power > bestPower) {
+      bestPower = power;
+      bestAz = azDeg;
+    }
+  }
+  return bestAz;
+}
+
 // How many recent estimates a node compares, and how far they may disagree before it stops claiming a direction.
 const TRACK_LEN = 4;
 const TRACK_MIN = 2;

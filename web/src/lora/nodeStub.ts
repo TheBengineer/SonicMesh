@@ -4,11 +4,11 @@ import { createRng, nextFloat, nextU32, type Rng } from '../sim/rng';
 import type { DroneClass } from '../sim/scenario';
 import { gauss } from '../acoustics/dsp';
 import { FS } from '../acoustics/model';
-import { BEARING_SAMPLES, BearingTrack, estimateBearing } from '../detector/bearing';
+import { BEARING_SAMPLES, BearingTrack, estimateBearing, estimateShotBearing, SHOT_BEARING_SAMPLES } from '../detector/bearing';
 import { CombDetector, NODE_COMB_PARAMS } from '../detector/comb';
 import { ImpulseDetector } from '../detector/impulse';
 import { HEALTH_FIELDS } from '../protocol/messages';
-import type { DetectSpan, DetectState } from './types';
+import type { DetectSpan, DetectState, ShotHeard } from './types';
 
 // A detection keeps naming its drone this long after the pitch last matched it. The pitch drops out while the detector
 // holds on, and wanders onto noise for single frames.
@@ -23,6 +23,8 @@ const LINE_TOL = 0.13;
 // Spans kept for the debug lines; the waterfalls show well under a minute.
 export const MAX_DETECT_SPANS = 8;
 const MAX_SHOT_TIMES = 8;
+// Shots kept for the gateway's fixes. A few seconds of a busy range.
+export const MAX_SHOT_REPORTS = 64;
 // The harmonic detector skips any frame that overlaps a shot and this long after it, so a shot cannot break or start a
 // drone track. A drone's track holds for about a second, so a quarter-second gap leaves it intact.
 const SHOT_MASK_S = 0.6;
@@ -186,6 +188,9 @@ export class NodeStub {
   readonly spans: DetectSpan[] = [];
   // Recent shot onsets at this node, in sim seconds. Only the newest few are kept.
   readonly shotTimesS: number[] = [];
+  // Every recent shot this node heard. An array's entries get a bearing once the audio after the onset has arrived.
+  readonly shots: ShotHeard[] = [];
+  private pendingShots: { heard: ShotHeard; sample: number }[] = [];
   private readonly impulse = new ImpulseDetector();
   // Sample indices of recent shot onsets, for masking the harmonic detector.
   private readonly shotSamples: number[] = [];
@@ -249,7 +254,27 @@ export class NodeStub {
       this.shotTimesS.push(i / FS);
       if (this.shotTimesS.length > MAX_SHOT_TIMES) this.shotTimesS.shift();
       this.shotSamples.push(i);
+      const heard: ShotHeard = { tS: i / FS, azDeg: null };
+      this.shots.push(heard);
+      if (this.shots.length > MAX_SHOT_REPORTS) this.shots.shift();
+      if (this.kind === 'array') this.pendingShots.push({ heard, sample: i });
     }
+  }
+
+  // Takes the bearing of each shot whose onset window has reached every array mic. Shots too old for the rings are dropped.
+  listenForShotBearing(rings: RingView[], offsets: readonly (readonly [number, number])[]): void {
+    if (this.pendingShots.length === 0 || rings.length !== offsets.length) return;
+    this.pendingShots = this.pendingShots.filter(({ heard, sample }) => {
+      if (rings[0].written < sample + SHOT_BEARING_SAMPLES) return true;
+      const frames: Float32Array[] = [];
+      for (const r of rings) {
+        const f = new Float32Array(SHOT_BEARING_SAMPLES);
+        if (!r.read(sample, f)) return false;
+        frames.push(f);
+      }
+      heard.azDeg = estimateShotBearing(frames, offsets);
+      return false;
+    });
   }
 
   // Whether a frame starting at start and nFft long overlaps a shot or the time just after it.

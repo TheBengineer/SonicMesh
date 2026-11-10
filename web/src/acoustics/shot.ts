@@ -4,7 +4,7 @@ import { FS, REF_PA } from './model';
 
 // ASSUMED: a rifle-class shot, peak level at 1 m. The recordings fix the shape and decay, not this level, which is not
 // measured. The ledger tags it.
-export const SHOT_PEAK_DB_1M = 150;
+export const SHOT_PEAK_DB_1M = 130;
 export const SHOT_LEN_S = 0.8;
 
 // Fitted offline to 26 shots from four recordings (see data/gunshots, local only): the envelope, the decay

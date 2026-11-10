@@ -7,6 +7,7 @@ import { parseScenario, type NodeSpec } from '../src/sim/scenario';
 import { Terrain } from '../src/sim/terrain';
 import { hashWorld } from '../src/sim/world';
 import { airtime } from '../src/lora/channel';
+import type { ShotFix } from '../src/lora/types';
 import { LoRaNetwork, alertContention } from '../src/lora/mac';
 
 const HEARD = { bandDb: 72, ambientDb: 40, comb: { on: true, tracking: true, f0Hz: 250, peak: 0.3 } };
@@ -27,6 +28,9 @@ function runSeconds(net: LoRaNetwork, seconds: number, observe?: (net: LoRaNetwo
     net.tick(t);
   }
 }
+
+// The example run takes 80 to 130 s, so it gets a longer limit than the two minutes it had.
+const EXAMPLE_RUN_TIMEOUT_MS = 300_000;
 
 describe('LoRa MAC and schedule', () => {
   it('idle for 10 minutes: two HEALTH per node, ~5 % beacon duty, airtime from the formula', () => {
@@ -211,6 +215,7 @@ describe('LoRa MAC and schedule', () => {
     let both = 0;
     // The packet log keeps only the newest packets, so collect types during the run.
     const types = new Set<string>();
+    const fixes = new Map<string, ShotFix>();
     // the drone crosses near node 3 at about 17 s; run to 90 s, past the end of the event
     for (let i = 0; i < 9000; i++) {
       runner.stepTick();
@@ -224,6 +229,7 @@ describe('LoRa MAC and schedule', () => {
           if (n.detecting && n.shotTimesS.some((t) => Math.abs(t - i * TICK_S) < 0.5)) both++;
         }
         for (const p of snap.packets) types.add(p.type);
+        for (const f of snap.shotFixes) fixes.set(f.tFireS.toFixed(1), f);
         for (const n of snap.nodes) {
           if (!n.detecting) expect(n.targetIds).toEqual([]);
           if (n.targetIds.length > 0) {
@@ -235,6 +241,10 @@ describe('LoRa MAC and schedule', () => {
     }
     expect(linked, 'a node was linked to the drone').toBeGreaterThan(0);
     expect(both, 'a node heard a shot while it was detecting the drone').toBeGreaterThan(0);
+    // The range is at (420, -200). Each shot should be placed near it, and most shots should be placed at all.
+    const errors = [...fixes.values()].map((f) => Math.hypot(f.x - 420, f.y + 200));
+    expect(errors.length, 'shots were placed').toBeGreaterThan(5);
+    expect(Math.max(...errors), 'every placed shot is near the range').toBeLessThan(15);
     for (const type of ['BEACON', 'RANGING_RESULT', 'DETECT_START', 'DETECT', 'SNIPPET']) {
       expect(types.has(type), `example run sent ${type}`).toBe(true);
     }
@@ -242,7 +252,7 @@ describe('LoRa MAC and schedule', () => {
     // lasts; the return to idle has its own test above.
     expect(runner.lora.changes.map((c) => c.mode)).toEqual(['event']);
     expect(maxBand - ambient).toBeGreaterThan(6);
-  }, 120_000);
+  }, EXAMPLE_RUN_TIMEOUT_MS);
 
   it('reports alert-contention delivery over 200 seeds', () => {
     const seeds = 200;
