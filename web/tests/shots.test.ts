@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { ImpulseDetector, type SampleSource } from '../src/detector/impulse';
 import { renderShot, SHOT_FIT, SHOT_PEAK_DB_1M, shotRng } from '../src/acoustics/shot';
 import { FS, REF_PA } from '../src/acoustics/model';
-import { everyTicks, isShotTick, lastShotTick, rangeClearing, RANGE_BERM_M, shooterState } from '../src/sim/shots';
+import { everyTicks, isShotTick, lastShotTick, oneOffState, rangeClearing, RANGE_BERM_M, shooterState, shotStartingAt, shotTick } from '../src/sim/shots';
 import { createRng as rng0 } from '../src/sim/rng';
 import { placeTrees } from '../src/sim/terrain';
 import { parseScenario } from '../src/sim/scenario';
@@ -10,7 +10,7 @@ import exampleScenario from '../scenarios/example.json';
 import { createRng } from '../src/sim/rng';
 import { gauss } from '../src/acoustics/dsp';
 import { Terrain } from '../src/sim/terrain';
-import { applyOp, createWorld, hashWorld } from '../src/sim/world';
+import { applyOp, createWorld, hashWorld, stepWorld } from '../src/sim/world';
 
 // A fixed buffer shaped like a mic ring: samples are read by absolute index.
 function ringOf(samples: Float32Array): SampleSource {
@@ -26,20 +26,46 @@ function ringOf(samples: Float32Array): SampleSource {
 }
 
 describe('shot schedule', () => {
-  it('fires on the first tick and then every interval', () => {
-    const s = shooterState({ id: 1, kind: 'range', x: 0, y: 0, every_s: 4 }, 100);
-    expect(everyTicks(4)).toBe(400);
-    expect(isShotTick(s, 99)).toBe(false);
-    expect(isShotTick(s, 100)).toBe(true);
-    expect(isShotTick(s, 499)).toBe(false);
-    expect(isShotTick(s, 500)).toBe(true);
+  const spec = { id: 1, kind: 'range' as const, x: 0, y: 0, every_s: 4 };
+
+  it('fires about every interval, each shot somewhere within its slot, with an irregular gap', () => {
+    const s = shooterState(spec, 100, 5);
+    const E = everyTicks(4);
+    expect(E).toBe(400);
+    const ticks = Array.from({ length: 60 }, (_, k) => shotTick(s, k));
+    ticks.forEach((t, k) => {
+      expect(t).toBeGreaterThanOrEqual(100 + (k + 0.1) * E);
+      expect(t).toBeLessThanOrEqual(100 + (k + 0.9) * E);
+      expect(isShotTick(s, t)).toBe(true);
+    });
+    const gaps = ticks.slice(1).map((t, i) => t - ticks[i]);
+    expect(Math.min(...gaps)).toBeLessThan(E * 0.8);
+    expect(Math.max(...gaps)).toBeGreaterThan(E * 1.2);
   });
 
-  it('reports the latest shot that has started', () => {
-    const s = shooterState({ id: 1, kind: 'range', x: 0, y: 0, every_s: 4 }, 100);
+  it('draws the same cadence for the same seed, and a different one for another seed', () => {
+    const a = Array.from({ length: 20 }, (_, k) => shotTick(shooterState(spec, 0, 5), k));
+    const b = Array.from({ length: 20 }, (_, k) => shotTick(shooterState(spec, 0, 5), k));
+    const c = Array.from({ length: 20 }, (_, k) => shotTick(shooterState(spec, 0, 6), k));
+    expect(a).toEqual(b);
+    expect(a).not.toEqual(c);
+  });
+
+  it('reports the latest shot that has started, matching a brute-force search', () => {
+    const s = shooterState(spec, 100, 5);
+    const all = Array.from({ length: 60 }, (_, k) => shotTick(s, k));
     expect(lastShotTick(s, 50)).toBeNull();
-    expect(lastShotTick(s, 100)).toBe(100);
-    expect(lastShotTick(s, 650)).toBe(500);
+    for (let tick = 100; tick < 2000; tick += 7) {
+      const started = all.filter((t) => t <= tick);
+      expect(lastShotTick(s, tick)).toBe(started.length ? Math.max(...started) : null);
+    }
+  });
+
+  it('a one-off shot fires once, at its tick', () => {
+    const s = oneOffState(3, 10, 20, 250, 5);
+    expect(shotStartingAt(s, 250)).toBe(0);
+    expect(shotStartingAt(s, 251)).toBeNull();
+    expect(lastShotTick(s, 1000)).toBe(250);
   });
 });
 
@@ -126,6 +152,19 @@ describe('impulse detector', () => {
     expect(Math.abs(onsets[0] - at)).toBeLessThanOrEqual(16);
   });
 
+  it('finds two shots a second apart, so one shot\'s tail does not hide the next', () => {
+    const rng = createRng(7);
+    const n = FS * 3;
+    const x = new Float32Array(n);
+    for (let i = 0; i < n; i++) x[i] = 1e-4 * gauss(rng);
+    for (const at of [FS, 2 * FS]) {
+      const w = renderShot(rng0(at));
+      for (let i = 0; i < w.length && at + i < n; i++) x[at + i] += w[i] * 0.1;
+    }
+    const onsets = new ImpulseDetector().step(ringOf(x));
+    expect(onsets.length).toBe(2);
+  });
+
   it('finds nothing in a steady drone-like tone', () => {
     const rng = createRng(9);
     const x = new Float32Array(FS * 2);
@@ -155,6 +194,16 @@ describe('scenario shooters', () => {
 });
 
 describe('shooter ops', () => {
+  it('a click fires one shot, and the shooter is gone once its sound has finished', () => {
+    const scn = parseScenario(exampleScenario);
+    const world = createWorld(scn, new Terrain(scn.seed, scn.terrain));
+    world.state.tick = 250;
+    applyOp(world, { type: 'shot_fire', id: 9, x: 10, y: 20 });
+    expect(world.state.shooters.find((sh) => sh.id === 9)).toMatchObject({ once: true, t0: 250, x: 10, y: 20 });
+    for (let i = 0; i < 1000; i++) stepWorld(world);
+    expect(world.state.shooters.some((sh) => sh.id === 9)).toBe(false);
+  });
+
   it('adds and removes a shooter, starting its schedule at the tick it was added', () => {
     const scn = parseScenario(exampleScenario);
     const world = createWorld(scn, new Terrain(scn.seed, scn.terrain));

@@ -4,7 +4,7 @@ import { approach, clamp } from './math';
 import type { DroneClass, DroneSpec, FlightMode, NodeSpec, PathSpec, ScenarioFile, Vec2 } from './scenario';
 import type { Terrain } from './terrain';
 import type { Op } from './inputs';
-import { shooterState, type ShooterState } from './shots';
+import { ONE_OFF_LINGER_S, oneOffState, shooterState, type ShooterState } from './shots';
 import type { LoRaNetwork } from '../lora/mac';
 
 export interface Stick {
@@ -34,6 +34,7 @@ export interface DroneState extends Pose {
 
 export interface WorldState {
   tick: number;
+  seed: number;
   rng: number;
   truth: boolean;
   gateway: Vec2;
@@ -175,12 +176,13 @@ export function createWorld(scn: ScenarioFile, terrain: Terrain): World {
     terrain,
     state: {
       tick: 0,
+      seed: scn.seed >>> 0,
       rng: scn.seed >>> 0,
       truth: false,
       gateway: { ...scn.gateway },
       nodes: scn.nodes.map((n) => ({ ...n })),
       drones: scn.drones.map((d) => spawnDrone(d, 0, terrain)),
-      shooters: (scn.shooters ?? []).map((sh) => shooterState(sh, 0)),
+      shooters: (scn.shooters ?? []).map((sh) => shooterState(sh, 0, scn.seed >>> 0)),
     },
   };
 }
@@ -195,6 +197,9 @@ export function stepWorld(world: World): void {
       Object.assign(d, scripted(d.path, (s.tick + 1 - d.t0) * TICK_S, world.terrain));
     }
   }
+  // A one-off shooter goes once its shot has finished, so the sound it made still reaches far nodes.
+  const lingerTicks = Math.round(ONE_OFF_LINGER_S / TICK_S);
+  s.shooters = s.shooters.filter((sh) => !sh.once || s.tick - sh.t0 < lingerTicks);
   s.tick += 1;
 }
 
@@ -241,7 +246,10 @@ export function applyOp(world: World, op: Op): void {
       s.drones = s.drones.filter((d) => d.id !== op.id);
       break;
     case 'shooter_add':
-      if (!s.shooters.some((sh) => sh.id === op.shooter.id)) s.shooters.push(shooterState(op.shooter, s.tick));
+      if (!s.shooters.some((sh) => sh.id === op.shooter.id)) s.shooters.push(shooterState(op.shooter, s.tick, s.seed));
+      break;
+    case 'shot_fire':
+      if (!s.shooters.some((sh) => sh.id === op.id)) s.shooters.push(oneOffState(op.id, op.x, op.y, s.tick, s.seed));
       break;
     case 'shooter_remove':
       s.shooters = s.shooters.filter((sh) => sh.id !== op.id);

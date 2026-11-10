@@ -2,7 +2,7 @@ import { TICK_S } from '../sim/clock';
 import { createRng, type Rng } from '../sim/rng';
 import type { DroneClass, ScenarioFile } from '../sim/scenario';
 import type { Terrain } from '../sim/terrain';
-import { isShotTick, SHOOTER_H_M, type ShooterState } from '../sim/shots';
+import { SHOOTER_H_M, shotStartingAt, type ShooterState } from '../sim/shots';
 import type { World } from '../sim/world';
 import { bandLevelDb, gauss, hann, powerSpectrum } from './dsp';
 import { AudioRing, PoseLog, RotorLog, SampleRing, type Vec3 } from './history';
@@ -108,8 +108,10 @@ export class AcousticEngine {
     }
     // A shot that starts at tick T-1 begins at the first sample of this block.
     for (const sh of this.shooters.values()) {
-      if (!isShotTick(sh.st, T - 1)) continue;
-      const k = (T - 1 - sh.st.t0) / sh.st.everyTicks;
+      // Clear the block first. The ring wraps, so an unwritten sample would otherwise read an old shot's audio.
+      for (let i = 0; i < BLOCK; i++) sh.src.put(n0 + i, 0);
+      const k = shotStartingAt(sh.st, T - 1);
+      if (k === null) continue;
       const wave = renderShot(shotRng(this.scn.seed, sh.st.id, k));
       for (let i = 0; i < wave.length; i++) sh.src.put(n0 + i, wave[i]);
     }

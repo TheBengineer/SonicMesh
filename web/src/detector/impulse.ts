@@ -6,10 +6,12 @@ import { FS, REF_PA } from '../acoustics/model';
 const WIN = FS / 1000;
 const RATIO = 100; // 20 dB in power
 const BG_ALPHA = 0.001; // about 1 s, in windows
+// The background learns only from windows within 10 dB of itself. A shot's tail sits well above that, so it is not learned.
+const BG_LEARN_RATIO = 10;
 const HOLD_WINDOWS = 300; // 0.3 s after an onset before another can start
-// The peak follower decays with a 0.2 s time constant. A new onset must rise 20 dB above it, so the reverb tail of one
-// shot does not count as the next.
-const ENV_DECAY = Math.exp(-1 / 200);
+// A crack rises from the windows just before it, over a few milliseconds. The reverb tail falls away slowly, so it never
+// rises 20 dB above what came just before. This short memory is what keeps the tail of one shot from hiding the next.
+const RECENT_DECAY = Math.exp(-1 / 5);
 // Windows quieter than this (60 dB SPL in power) never count, so silence cannot trigger it.
 const MIN_POWER = (REF_PA * 10 ** (60 / 20)) ** 2;
 
@@ -22,7 +24,8 @@ export interface SampleSource {
 export class ImpulseDetector {
   private cursor = 0;
   private background = 0;
-  private envelope = 0;
+  // The loudest window of the last few milliseconds, decaying.
+  private recent = 0;
   private primed = false;
   private hold = 0;
   private readonly buf = new Float32Array(WIN);
@@ -37,19 +40,18 @@ export class ImpulseDetector {
       e /= WIN;
       if (!this.primed) {
         this.background = e;
-        this.envelope = e;
         this.primed = true;
       }
-      const floor = Math.max(this.background, this.envelope * ENV_DECAY);
+      const floor = Math.max(this.background, this.recent);
       if (this.hold > 0) {
         this.hold--;
       } else if (e > RATIO * floor && e > MIN_POWER) {
         onsets.push(this.cursor);
         this.hold = HOLD_WINDOWS;
-      } else {
+      } else if (e < BG_LEARN_RATIO * this.background) {
         this.background += BG_ALPHA * (e - this.background);
       }
-      this.envelope = Math.max(e, this.envelope * ENV_DECAY);
+      this.recent = Math.max(e, this.recent * RECENT_DECAY);
       this.cursor += WIN;
     }
     return onsets;

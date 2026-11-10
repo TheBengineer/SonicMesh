@@ -15,6 +15,7 @@ export type Op =
   | { type: 'gateway_move'; x: number; y: number }
   | { type: 'shooter_add'; shooter: ShooterSpec }
   | { type: 'shooter_remove'; id: number }
+  | { type: 'shot_fire'; id: number; x: number; y: number }
   | { type: 'truth'; on: boolean };
 
 export type LogEntry = Op & { tick: number };
@@ -39,6 +40,7 @@ const OP_TYPES: readonly Op['type'][] = [
   'gateway_move',
   'shooter_add',
   'shooter_remove',
+  'shot_fire',
   'truth',
 ];
 

@@ -333,6 +333,7 @@ const HEARD_S = 1.5;
 const HEARD_RADIUS_M = 40;
 // How long a placed shot stays marked on the map.
 const FIX_SHOW_S = 4;
+const SHOT_COLOR = 0xff4d6d;
 
 function buildGateway(): THREE.Group {
   const g = new THREE.Group();
@@ -662,15 +663,33 @@ export class WorldView {
         this.shotGroup.add(ring);
       }
     }
+    // A placed shot is drawn like a bogie: its estimated area, and a line from each node that placed it to the area's edge.
     for (const f of lora.shotFixes) {
       const age = nowS - f.tFireS;
       if (age < 0 || age > FIX_SHOW_S) continue;
-      const mat = new THREE.MeshBasicMaterial({ color: 0xff4d6d, transparent: true, opacity: 0.9 * (1 - age / FIX_SHOW_S), side: THREE.DoubleSide, depthWrite: false, depthTest: false });
-      const mark = new THREE.Mesh(new THREE.RingGeometry(2.5, 3.5, 24), mat);
-      mark.rotation.x = -Math.PI / 2;
-      mark.position.copy(toScene(f.x, f.y, world.terrain.height(f.x, f.y) + 3));
-      mark.raycast = () => {};
-      this.shotGroup.add(mark);
+      const fade = 1 - age / FIX_SHOW_S;
+      const at = toScene(f.x, f.y, world.terrain.height(f.x, f.y) + 2);
+      for (const k of [1, 0.5]) {
+        const mat = new THREE.MeshBasicMaterial({ color: SHOT_COLOR, transparent: true, opacity: 0.22 * fade, side: THREE.DoubleSide, depthWrite: false, depthTest: false });
+        const disc = new THREE.Mesh(new THREE.CircleGeometry(f.radiusM * k, 32), mat);
+        disc.rotation.x = -Math.PI / 2;
+        disc.position.copy(at);
+        disc.raycast = () => {};
+        this.shotGroup.add(disc);
+      }
+      const area = { x: f.x, y: f.y, majorM: f.radiusM, minorM: f.radiusM, angleRad: 0, nodeIds: f.nodeIds };
+      for (const id of f.nodeIds) {
+        const n = state.nodes.find((o) => o.id === id);
+        const edge = n && areaEdge(area, n.x, n.y);
+        if (!n || !edge) continue;
+        const from = toScene(n.x, n.y, world.terrain.height(n.x, n.y) + 4);
+        const to = toScene(edge.x, edge.y, world.terrain.height(edge.x, edge.y) + 3);
+        const line = new Line2(
+          new LineGeometry().setPositions([from.x, from.y, from.z, to.x, to.y, to.z]),
+          new LineMaterial({ color: SHOT_COLOR, linewidth: AREA_LINE_PX, transparent: true, opacity: 0.8 * fade, depthTest: false }),
+        );
+        this.shotGroup.add(line);
+      }
     }
   }
 
@@ -986,22 +1005,22 @@ export class WorldView {
     for (const f of lora?.shotFixes ?? []) {
       const age = nowS - f.tFireS;
       if (age < 0 || age > FIX_SHOW_S) continue;
-      ctx.strokeStyle = `rgba(255, 77, 109, ${0.9 * (1 - age / FIX_SHOW_S)})`;
+      const fade = 1 - age / FIX_SHOW_S;
+      ctx.fillStyle = `rgba(255, 77, 109, ${0.22 * fade})`;
+      ctx.beginPath();
+      ctx.arc(sx(f.x), sy(f.y), f.radiusM / scale, 0, Math.PI * 2);
+      ctx.fill();
+      const area = { x: f.x, y: f.y, majorM: f.radiusM, minorM: f.radiusM, angleRad: 0, nodeIds: f.nodeIds };
+      ctx.strokeStyle = `rgba(255, 77, 109, ${0.8 * fade})`;
       ctx.lineWidth = 2;
       ctx.beginPath();
       for (const id of f.nodeIds) {
         const n = state.nodes.find((node) => node.id === id);
-        if (!n) continue;
+        const edge = n && areaEdge(area, n.x, n.y);
+        if (!n || !edge) continue;
         ctx.moveTo(sx(n.x), sy(n.y));
-        ctx.lineTo(sx(f.x), sy(f.y));
+        ctx.lineTo(sx(edge.x), sy(edge.y));
       }
-      ctx.stroke();
-      const r = 6;
-      ctx.beginPath();
-      ctx.moveTo(sx(f.x) - r, sy(f.y) - r);
-      ctx.lineTo(sx(f.x) + r, sy(f.y) + r);
-      ctx.moveTo(sx(f.x) + r, sy(f.y) - r);
-      ctx.lineTo(sx(f.x) - r, sy(f.y) + r);
       ctx.stroke();
     }
 

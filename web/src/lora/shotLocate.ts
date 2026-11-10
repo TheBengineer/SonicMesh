@@ -20,7 +20,10 @@ const BEARING_SIGMA_DEG = 8;
 const COARSE_M = 10;
 const FINE_M = 1;
 const FINE_SPAN_M = 15;
-const MIN_NODES = 2;
+const MIN_NODES = 3;
+// A fit whose onset times disagree by more than this (about 1.7 m of travel) is two shots, or noise, not one shot.
+const MAX_RESIDUAL_S = 0.005;
+const MIN_RADIUS_M = 8;
 
 // Splits reports into shots: runs of onsets with no gap longer than CLUSTER_GAP_S.
 export function clusterShots(reports: ShotReport[]): ShotReport[][] {
@@ -81,11 +84,15 @@ export function locateShot(reports: ShotReport[], size: readonly [number, number
       if (s.cost < best.cost) best = { x, y, ...s };
     }
   }
+  if (best.residualS > MAX_RESIDUAL_S) return null;
+  // The bearing error sets the area: two sigma of it, at the nearest node that gave a bearing.
+  const dBearing = Math.min(...reports.filter((r) => r.azDeg !== null).map((r) => Math.hypot(best.x - r.x, best.y - r.y)));
   return {
     x: best.x,
     y: best.y,
     tFireS: best.tFireS,
     nodeIds: [...new Set(reports.map((r) => r.id))],
     residualS: best.residualS,
+    radiusM: Math.max(MIN_RADIUS_M, ((2 * BEARING_SIGMA_DEG * Math.PI) / 180) * dBearing),
   };
 }

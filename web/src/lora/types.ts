@@ -137,6 +137,8 @@ export interface ShotFix {
   tFireS: number;
   nodeIds: number[];
   residualS: number;
+  // Radius of the estimated area, about two sigma of the bearing error at the nearest bearing.
+  radiusM: number;
 }
 
 export interface LoraView {
