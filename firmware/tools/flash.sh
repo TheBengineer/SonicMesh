@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
-# Flashes a built SonicMesh app to a XIAO nRF52840 Sense over USB, no buttons needed.
+# Flashes a built SonicMesh app over USB, no buttons needed.
 #   tools/flash.sh node|gateway /dev/ttyACMx
 #
+# XIAO ESP32-S3 (USB id 303a:1001): esptool resets the chip into its ROM loader through the USB
+# serial port and writes build/<app>-s3 (or build/<app>-s3sense with SM_BOARD=s3sense).
+#
+# XIAO nRF52840 Sense:
 # Opens the port at 1200 baud, so the board restarts into its UF2 bootloader, which shows up as a
 # USB drive (XIAO-SENSE). The script finds the drive on the same USB port and writes the .uf2 to it;
 # the board flashes itself and restarts. A board whose firmware ignores the 1200 baud touch needs a
@@ -13,10 +17,25 @@ set -euo pipefail
 APP=${1:?usage: flash.sh node|gateway /dev/ttyACMx}
 PORT=${2:?usage: flash.sh node|gateway /dev/ttyACMx}
 FW=$(cd "$(dirname "$0")/.." && pwd)
-UF2=$FW/build/$APP/zephyr/zephyr.uf2
-[ -f "$UF2" ] || { echo "no $UF2; run tools/build.sh $APP first"; exit 1; }
 
 prop() { udevadm info -q property "$1" 2>/dev/null | sed -n "s/^$2=//p"; }
+
+if [ "$(prop "$PORT" ID_VENDOR_ID)" = 303a ]; then
+	BOARD=${SM_BOARD:-s3}
+	BIN=$FW/build/$APP-$BOARD/zephyr/zephyr.bin
+	[ -f "$BIN" ] || { echo "no $BIN; run tools/build.sh $APP $BOARD first"; exit 1; }
+	ZP=${ZEPHYR_PROJECT:-$HOME/zephyrproject}
+	# shellcheck disable=SC1091
+	source "$ZP/.venv/bin/activate"
+	echo "writing $APP ($BOARD) to $PORT"
+	esptool --port "$PORT" --baud 921600 --after hard-reset write-flash -u --flash-mode dio \
+		--flash-freq 80m --flash-size 8MB 0x0 "$BIN" >/dev/null
+	echo "programmed $APP, running on $PORT"
+	exit 0
+fi
+
+UF2=$FW/build/$APP/zephyr/zephyr.uf2
+[ -f "$UF2" ] || { echo "no $UF2; run tools/build.sh $APP first"; exit 1; }
 # USB device path without the interface, e.g. pci-0000:05:00.1-usb-0:1
 usb_of() { prop "$1" ID_PATH | sed -E 's/:[0-9]+\.[0-9]+(-.*)?$//'; }
 

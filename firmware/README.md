@@ -1,6 +1,7 @@
 # SonicMesh firmware
 
-Firmware for the SonicMesh field test on Seeed XIAO nRF52840 Sense boards.
+Firmware for the SonicMesh field test on Seeed XIAO nRF52840 Sense boards. The gateway also runs on
+a Seeed XIAO ESP32-S3 (see [ESP32-S3](#esp32-s3)).
 
 A node captures its PDM microphone, runs every enabled detector at once (drone harmonic comb, gunshot
 onset), and broadcasts the records they produce over BLE Coded PHY (long range, S8) extended
@@ -21,9 +22,10 @@ both share the library in `lib/` and the headers in `include/sonicmesh/`.
 | `apps/node/` | Node application (`src/main.c`, `prj.conf`, board overlay that enables the PDM mic) |
 | `apps/gateway/` | Gateway application (`src/main.c`, `prj.conf`) |
 | `apps/common.conf` | Settings both apps build with. `tools/build.sh` passes it as `EXTRA_CONF_FILE` |
+| `apps/nrf52840.conf`, `apps/esp32s3.conf` | Bluetooth controller settings per chip, added by `tools/build.sh` |
 | `apps/usb_console.overlay` | USB serial console: 8 KB transmit FIFO and hardware flow control, so output is not cut |
 | `Kconfig`, `CMakeLists.txt`, `zephyr/module.yml` | The Zephyr module: options, sources, module registration |
-| `tools/` | `install_toolchain.sh`, `build.sh`, `flash.sh`, `smlog.py`, and `sm` with `smtool/` (tuning and bench tests, see below) |
+| `tools/` | `install_toolchain.sh`, `build.sh` (`node`|`gateway`, then `nrf`, `s3` or `s3sense`), `flash.sh`, `smlog.py`, and `sm` with `smtool/` (tuning and bench tests, see below) |
 | `tests/host/` | Host tests that need no Zephyr: comb parity, wire format, timing bench; `smdet.c`, the detector cores as a library for offline replay |
 
 ## Setup
@@ -54,6 +56,33 @@ Extra arguments go to CMake, so any Kconfig symbol from `firmware/Kconfig` can b
 
     firmware/tools/build.sh node -DCONFIG_SM_ADV_INTERVAL_MS=200
     firmware/tools/build.sh node -DCONFIG_SM_DETECTOR_GUNSHOT=n
+
+## ESP32-S3
+
+The gateway builds and runs on a XIAO ESP32-S3, whose external antenna helps at range. The node does
+not yet: Zephyr has no driver for the S3's PDM microphone.
+
+Setup, once, on top of the nRF setup (about 1 GB):
+
+    cd ~/zephyrproject && source .venv/bin/activate
+    west config manifest.project-filter -- '-.*,+cmsis,+cmsis_6,+hal_nordic,+segger,+tinycrypt,+mbedtls,+picolibc,+cmsis-dsp,+hal_espressif,+tf-psa-crypto'
+    west update hal_espressif tf-psa-crypto
+    west blobs fetch hal_espressif
+    pip install 'esptool>=5.0.2'
+    ~/zephyr-sdk-1.0.1/setup.sh -t xtensa-espressif_esp32s3_zephyr-elf
+
+Build and flash:
+
+    firmware/tools/build.sh gateway s3
+    firmware/tools/flash.sh gateway /dev/ttyACM0
+
+The build goes to `build/gateway-s3`. `flash.sh` sees the Espressif USB id (`303a:1001`) and writes
+the image with esptool, which resets the chip into its ROM loader through the USB serial port, so no
+buttons are needed. The S3 transmits at +20 dBm (the nRF at +8). Differences from the nRF: one LED
+shows every colour, there is no `sm bootloader`, and a crash record has no program counter.
+
+Bench, one nRF node: the node synced within 20 s, drift -17.6 ppm, sync residual 11 us
+standard deviation and 27 us worst over 90 events; the gateway lost no records.
 
 ## Flash
 

@@ -5,10 +5,14 @@
 
 #include <sonicmesh/status_led.h>
 
+/* A board with one LED (the XIAO ESP32-S3) shows every colour on led0. */
+#define LED_SPEC(alias) \
+	GPIO_DT_SPEC_GET(COND_CODE_1(DT_HAS_ALIAS(alias), (DT_ALIAS(alias)), (DT_ALIAS(led0))), gpios)
+
 static const struct gpio_dt_spec leds[] = {
-	GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpios), /* red */
-	GPIO_DT_SPEC_GET(DT_ALIAS(led1), gpios), /* green */
-	GPIO_DT_SPEC_GET(DT_ALIAS(led2), gpios), /* blue */
+	LED_SPEC(led0), /* red */
+	LED_SPEC(led1), /* green */
+	LED_SPEC(led2), /* blue */
 };
 
 static bool held[ARRAY_SIZE(leds)];

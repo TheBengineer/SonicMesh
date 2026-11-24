@@ -12,7 +12,9 @@
 #include <zephyr/shell/shell.h>
 #include <zephyr/sys/reboot.h>
 
+#if defined(CONFIG_SOC_FAMILY_NORDIC_NRF)
 #include <hal/nrf_power.h>
+#endif
 
 #include <sonicmesh/msg.h>
 #include <sonicmesh/wire.h>
@@ -276,6 +278,7 @@ static int cmd_reboot(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 
+#if defined(CONFIG_SOC_FAMILY_NORDIC_NRF)
 /* Restart into the UF2 bootloader, like the 1200 baud touch. */
 static int cmd_bootloader(const struct shell *sh, size_t argc, char **argv)
 {
@@ -285,6 +288,7 @@ static int cmd_bootloader(const struct shell *sh, size_t argc, char **argv)
 	sys_reboot(SYS_REBOOT_WARM);
 	return 0;
 }
+#endif
 
 SHELL_STATIC_SUBCMD_SET_CREATE(sm_param_cmds,
 	SHELL_CMD_ARG(list, NULL, "List parameters as JSON: sm param list [prefix]", cmd_param_list, 1, 1),
@@ -303,6 +307,8 @@ SHELL_SUBCMD_ADD((sm), param, &sm_param_cmds, "Run-time parameters", NULL, 0, 0)
 SHELL_SUBCMD_ADD((sm), trace, NULL, "sm trace [off | <name> <level 0-3>...]", cmd_trace, 1, 30);
 SHELL_SUBCMD_ADD((sm), send, NULL, "Queue a raw record: sm send <type> [hex]", cmd_send, 2, 1);
 SHELL_SUBCMD_ADD((sm), reboot, NULL, "Restart", cmd_reboot, 0, 0);
+#if defined(CONFIG_SOC_FAMILY_NORDIC_NRF)
 SHELL_SUBCMD_ADD((sm), bootloader, NULL, "Restart into the UF2 bootloader", cmd_bootloader, 0, 0);
+#endif
 
 SHELL_CMD_REGISTER(sm, &sm_cmds, "SonicMesh: parameters, traces, status", NULL);

@@ -36,7 +36,11 @@ void k_sys_fatal_error_handler(unsigned int reason, const struct arch_esf *esf)
 	}
 	crash.magic = CRASH_MAGIC;
 	crash.reason = reason;
+#if defined(CONFIG_ARM)
 	crash.pc = esf ? esf->basic.pc : 0;
+#else
+	crash.pc = 0; /* Xtensa: the frame layout is private to the arch; the fault log has it */
+#endif
 	crash.count++;
 	memset(crash.thread, 0, sizeof(crash.thread));
 	if (name) {

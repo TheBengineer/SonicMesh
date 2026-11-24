@@ -9,12 +9,13 @@ if(CONFIG_SONICMESH)
     lib/msg.c
     lib/timesync.c
     lib/status_led.c
-    lib/bootloader.c
     lib/diag.c
     lib/param.c
     lib/shell_cmds.c
     lib/watchdog.c
   )
+  # The 1200 baud touch into the UF2 bootloader; an ESP32 is reset into its ROM loader by esptool.
+  zephyr_library_sources_ifdef(CONFIG_SOC_FAMILY_NORDIC_NRF lib/bootloader.c)
   zephyr_library_sources_ifdef(CONFIG_SM_ROLE_NODE
     lib/audio.c
     lib/battery.c

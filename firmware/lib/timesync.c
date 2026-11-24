@@ -4,6 +4,7 @@
 #include <zephyr/logging/log.h>
 
 #include <sonicmesh/timesync.h>
+#include <sonicmesh/trace.h>
 
 LOG_MODULE_REGISTER(sm_time, CONFIG_SONICMESH_LOG_LEVEL);
 
@@ -48,6 +49,9 @@ void sm_timesync_state(double *offset_us, double *drift_ppm, int *points)
 #define OUTLIER_RUN 5
 /* After this long with no event the node stops calling its times network time. */
 #define STALE_US (30LL * 1000000)
+
+SM_TRACE_DEFINE(sync, "time sync. 1: each sync train event (label, residual from the fit before it in us, "
+		"drift ppm, points)");
 
 struct pair {
 	int64_t local;
@@ -109,14 +113,17 @@ void sm_timesync_point(int64_t rx_local_us, uint32_t label_us)
 	ts.last_net32 = label_us;
 
 	int64_t net = ts.net_hi + label_us;
+	double resid = 0;
 
 	if (ts.fitted && ts.n >= 8) {
 		double pred = (double)ts.net0 + (double)(rx_local_us - ts.local0) * (1.0 + ts.rate);
-		double resid = (double)net - pred;
 
+		resid = (double)net - pred;
 		if (fabs(resid) > OUTLIER_US) {
 			if (++ts.strays < OUTLIER_RUN) {
 				k_spin_unlock(&ts.lock, key);
+				SM_TRACE(sync, 1, rx_local_us, ",\"label\":%u,\"resid_us\":%.1f,\"stray\":1",
+					 label_us, resid);
 				return;
 			}
 			LOG_WRN("sync jumped %.0f us, refitting", resid);
@@ -131,7 +138,12 @@ void sm_timesync_point(int64_t rx_local_us, uint32_t label_us)
 		ts.n++;
 	}
 	refit();
+	double ppm = ts.rate * 1e6;
+	int n = ts.n;
+
 	k_spin_unlock(&ts.lock, key);
+	SM_TRACE(sync, 1, rx_local_us, ",\"label\":%u,\"resid_us\":%.1f,\"ppm\":%.2f,\"pts\":%d", label_us,
+		 resid, ppm, n);
 }
 
 bool sm_time_to_net(int64_t local_us, uint32_t *net_us)

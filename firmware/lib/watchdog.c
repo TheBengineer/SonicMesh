@@ -23,7 +23,12 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/shell/shell.h>
 
+#if defined(CONFIG_SOC_FAMILY_NORDIC_NRF)
 #include <hal/nrf_wdt.h>
+#define NRF_INHERIT 1
+#else
+#define NRF_INHERIT 0
+#endif
 
 LOG_MODULE_REGISTER(sm_wdt, CONFIG_SONICMESH_LOG_LEVEL);
 
@@ -48,10 +53,12 @@ static int wdt_start(void)
 	/* After a soft reset (a reset into the bootloader, then the new image) the watchdog still runs
 	 * with the old settings, which the driver cannot change. They are ours (TIMEOUT_MS), so it is
 	 * fed directly; the next power-on or watchdog reset starts it through the driver again. */
+#if NRF_INHERIT
 	if (nrf_wdt_started_check(NRF_WDT)) {
 		inherited = true;
 		return 0;
 	}
+#endif
 	if (!device_is_ready(wdt)) {
 		return 0;
 	}
@@ -65,8 +72,8 @@ static int wdt_start(void)
 		return 0;
 	}
 	/* Runs while the CPU sleeps; pauses only while a debugger has halted it. */
-	if (wdt_setup(wdt, WDT_OPT_PAUSE_HALTED_BY_DBG) != 0) {
-		channel = -1;
+	if (wdt_setup(wdt, WDT_OPT_PAUSE_HALTED_BY_DBG) != 0 && wdt_setup(wdt, 0) != 0) {
+		channel = -1; /* the second try: a watchdog that cannot pause for the debugger */
 	}
 	return 0;
 }
@@ -75,14 +82,16 @@ SYS_INIT(wdt_start, POST_KERNEL, 0);
 
 static void feed(void)
 {
+#if NRF_INHERIT
 	if (inherited) {
 		/* Every reload register: whichever channels the old settings enabled must all be fed. */
 		for (int i = 0; i < NRF_WDT_CHANNEL_NUMBER; i++) {
 			nrf_wdt_reload_request_set(NRF_WDT, (nrf_wdt_rr_register_t)i);
 		}
-	} else {
-		wdt_feed(wdt, channel);
+		return;
 	}
+#endif
+	wdt_feed(wdt, channel);
 }
 
 static void feeder(void *p1, void *p2, void *p3)
