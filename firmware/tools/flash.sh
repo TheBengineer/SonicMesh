@@ -96,7 +96,8 @@ echo "writing $APP to $DISK ($MNT)"
 # The board restarts as soon as the last block lands, so the final write can report an I/O error.
 dd if="$UF2" of="$MNT/NEW.UF2" bs=4096 conv=fsync oflag=direct status=none 2>/dev/null || true
 
-for _ in $(seq 1 40); do
+# Up to 30 s: a board's first boot after a new image, or on a fresh board, can take over 10 s.
+for _ in $(seq 1 120); do
 	sleep 0.25
 	P=$(find_port || true)
 	if [ -n "$P" ] && [ "$(prop "$P" ID_VENDOR_ID)" = 2fe3 ]; then
