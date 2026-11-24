@@ -1,0 +1,7 @@
+{
+  "name": "quiet",
+  "gap_s": 4,
+  "clips": [
+    {"kind": "quiet", "silence_s": 300}
+  ]
+}
