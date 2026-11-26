@@ -1,4 +1,0 @@
-name: sonicmesh
-build:
-  cmake: .
-  kconfig: Kconfig

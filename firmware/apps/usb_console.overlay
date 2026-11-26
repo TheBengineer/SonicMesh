@@ -1,7 +1,0 @@
-/* USB serial console. Without flow control the CDC ACM driver discards output whenever its TX
- * buffers are full, which cut every line at one 64-byte packet. With it, the writer waits instead.
- * The bigger FIFO absorbs bursts (status blocks, the gateway's JSON lines). */
-&board_cdc_acm_uart {
-	tx-fifo-size = <8192>;
-	hw-flow-control;
-};

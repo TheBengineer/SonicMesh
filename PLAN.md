@@ -8,7 +8,6 @@ The perimeter is a tripwire. For each crossing it answers *did something cross, 
 line, which way, and when*. Precise localisation is a bonus, not the core requirement.
 
 Research so far, which this plan builds on:
-- [01: TDOA, processing, boards, emulation](docs/research/01-tdoa-processing-hardware.md)
 - [02: information budget over LoRa](docs/research/02-information-budget.md)
 - [03: real drone recordings](docs/research/03-real-hover-audio.md)
 - [04: hardware boundaries](docs/research/04-hardware-boundaries.md)
